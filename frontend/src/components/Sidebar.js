@@ -1,27 +1,34 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 export default function Sidebar() {
-  return (
-    <div style={{
-      width:220,
-      background:"#0f172a",
-      color:"#fff",
-      padding:20,
-      minHeight:"100vh"
-    }}>
-      <h2 style={{marginBottom:20}}>LeadForge</h2>
+  const location = useLocation();
 
-      <Link to="/" style={link}> SalesNav Agent</Link>
-      <Link to="/google" style={link}> Google Agent</Link>
-      <Link to="/enrichment" style={link}> Enrichment Agent</Link>
-      <Link to="/requests" style={link}> Requests</Link>
+  const menu = [
+    { path: "/", label: "Sales Navigator", icon: "🔵" },
+    { path: "/google", label: "Google Agent", icon: "🟡" },
+    { path: "/enrichment", label: "Enrichment", icon: "🟢" },
+    { path: "/requests", label: "Requests", icon: "📁" },
+  ];
+
+  return (
+    <div className="w-64 bg-gray-900 text-white p-6">
+      <h1 className="text-2xl font-bold mb-10">LeadForge</h1>
+
+      <nav className="space-y-4">
+        {menu.map(item => (
+          <Link
+            key={item.path}
+            to={item.path}
+            className={`block px-4 py-2 rounded-lg transition ${
+              location.pathname === item.path
+                ? "bg-gray-700"
+                : "hover:bg-gray-800"
+            }`}
+          >
+            {item.icon} {item.label}
+          </Link>
+        ))}
+      </nav>
     </div>
   );
 }
-
-const link = {
-  display:"block",
-  color:"#fff",
-  textDecoration:"none",
-  marginBottom:15
-};
