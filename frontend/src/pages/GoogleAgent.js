@@ -1,24 +1,24 @@
 import { useState } from "react";
 
 export default function GoogleAgent() {
-  const [industry,setIndustry]=useState("");
-
   return (
-    <div>
-      <h2>Google Discovery Agent</h2>
-      <p style={{color:"gray"}}>
-        (Backend logic coming soon)
+    <div className="bg-white rounded-2xl shadow-lg p-8 max-w-3xl">
+      <h3 className="text-xl font-semibold mb-4">
+        Google Discovery Agent
+      </h3>
+
+      <p className="text-gray-500 mb-4">
+        Coming in Phase 2 – Web scraping + SERP enrichment
       </p>
 
-      <input
-        placeholder="Industry Include"
-        value={industry}
-        onChange={e=>setIndustry(e.target.value)}
-      />
-
-      <button disabled style={{marginLeft:10}}>
-        Launch (Coming Soon)
+      <button
+        disabled
+        className="bg-gray-400 text-white px-6 py-2 rounded-lg"
+      >
+        Coming Soon
       </button>
     </div>
+  );
+}
   );
 }
