@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Sidebar from "./components/Sidebar";
+import Header from "./components/Header";
 import SalesNav from "./pages/SalesNav";
 import GoogleAgent from "./pages/GoogleAgent";
 import Enrichment from "./pages/Enrichment";
@@ -8,15 +9,18 @@ import Requests from "./pages/Requests";
 export default function App() {
   return (
     <BrowserRouter>
-      <div style={{display:"flex"}}>
+      <div className="flex min-h-screen">
         <Sidebar />
-        <div style={{flex:1,padding:20}}>
-          <Routes>
-            <Route path="/" element={<SalesNav />} />
-            <Route path="/google" element={<GoogleAgent />} />
-            <Route path="/enrichment" element={<Enrichment />} />
-            <Route path="/requests" element={<Requests />} />
-          </Routes>
+        <div className="flex-1 flex flex-col">
+          <Header />
+          <div className="p-8">
+            <Routes>
+              <Route path="/" element={<SalesNav />} />
+              <Route path="/google" element={<GoogleAgent />} />
+              <Route path="/enrichment" element={<Enrichment />} />
+              <Route path="/requests" element={<Requests />} />
+            </Routes>
+          </div>
         </div>
       </div>
     </BrowserRouter>
