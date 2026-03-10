@@ -6,6 +6,8 @@ from .models import LeadRequest, Company
 from .phantom_service import launch_agent, get_container_status, fetch_container_output
 import time
 import pandas as pd
+from app.services.salesnav_builder import build_salesnav_company_search
+from app.services.phantom_service import launch_company_search
 
 Base.metadata.create_all(bind=engine)
 
