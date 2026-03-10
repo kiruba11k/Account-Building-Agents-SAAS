@@ -22,3 +22,21 @@ def build_salesnav_company_search(filters):
         params["keywords"] = filters["keywords_include"]
 
     return base_url + urlencode(params)
+    
+@app.post("/api/run-salesnav")
+def run_salesnav(data: dict):
+
+    # Step 1 → build SalesNav URL
+    search_url = build_salesnav_company_search(data)
+
+    # Step 2 → launch company search phantom
+    response = launch_company_search(search_url)
+
+    container_id = response.get("containerId")
+
+    return {
+        "message": "SalesNav search started",
+        "search_url": search_url,
+        "container_id": container_id
+    }
+
