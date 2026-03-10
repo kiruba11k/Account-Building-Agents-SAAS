@@ -1,18 +1,38 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-import os
+from sqlalchemy import Column, Integer, String, JSON, ForeignKey
+from .database import Base
 
-DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True   # prevents Render idle DB disconnect errors
-)
+class LeadRequest(Base):
+    __tablename__ = "lead_requests"
 
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
+    id = Column(Integer, primary_key=True, index=True)
 
-Base = declarative_base()
+    request_name = Column(String)
+    status = Column(String, default="Queued")
+
+    container_id = Column(String)
+
+    total_results = Column(Integer, default=0)
+
+    filters = Column(JSON)
+
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    request_id = Column(Integer, ForeignKey("lead_requests.id"))
+
+    name = Column(String)
+
+    linkedin_url = Column(String)
+    website = Column(String)
+
+    industry = Column(String)
+
+    headcount = Column(String)
+
+    revenue = Column(String)
+
+    headquarters = Column(String)
