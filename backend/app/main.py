@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal
 from .models import LeadRequest, Company
-
+from app.services.company_utils import extract_domain, calculate_confidence
 from app.services.salesnav_builder import build_salesnav_company_search
 from app.phantom_service import (
     launch_company_search,
