@@ -8,9 +8,15 @@ class LeadRequest(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     request_name = Column(String)
+
     status = Column(String, default="Queued")
 
     container_id = Column(String)
+
+    phase = Column(String)   # search / scrape / completed
+
+    progress = Column(Integer, default=0)
+
     total_results = Column(Integer, default=0)
 
     filters = Column(JSON)
