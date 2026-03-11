@@ -5,6 +5,7 @@ import SalesNav from "./pages/SalesNav";
 import GoogleAgent from "./pages/GoogleAgent";
 import Enrichment from "./pages/Enrichment";
 import Requests from "./pages/Requests";
+import Results from "./pages/Results";
 
 export default function App() {
   return (
