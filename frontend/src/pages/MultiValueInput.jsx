@@ -16,7 +16,6 @@ export default function MultiValueInput({ label, values, setValues }) {
 
       setInput("");
     }
-
   };
 
   const removeValue = (index) => {
