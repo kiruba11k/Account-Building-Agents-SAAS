@@ -2,19 +2,23 @@ from sqlalchemy import Column, Integer, String, JSON, ForeignKey
 from .database import Base
 
 
-class LeadRequest(Base):
-    __tablename__ = "lead_requests"
+class Lead(Base):
+    __tablename__ = "leads"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
 
-    request_name = Column(String)
-    status = Column(String, default="Queued")
+    request_id = Column(Integer)
 
-    container_id = Column(String)
+    full_name = Column(String)
+    title = Column(String)
 
-    total_results = Column(Integer, default=0)
+    company_name = Column(String)
 
-    filters = Column(JSON)
+    industry = Column(String)
+
+    location = Column(String)
+
+    linkedin_profile = Column(String)
 
 
 class Company(Base):
