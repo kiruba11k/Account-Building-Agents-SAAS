@@ -1,11 +1,14 @@
+# app/services/salesnav_builder.py
+
 from urllib.parse import urlencode
+
 
 def build_salesnav_company_search(filters):
     """
     Convert dashboard filters into a Sales Navigator company search URL
     """
 
-    base_url = "https://www.linkedin.com/sales/search/company?"
+    base_url = "https://www.linkedin.com/sales/search/company"
 
     params = {}
 
@@ -21,22 +24,12 @@ def build_salesnav_company_search(filters):
     if filters.get("keywords_include"):
         params["keywords"] = filters["keywords_include"]
 
-    return base_url + urlencode(params)
-    
-@app.post("/api/run-salesnav")
-def run_salesnav(data: dict):
+    if filters.get("revenue_min_usd"):
+        params["revenueMin"] = filters["revenue_min_usd"]
 
-    # Step 1 → build SalesNav URL
-    search_url = build_salesnav_company_search(data)
+    if filters.get("revenue_max_usd"):
+        params["revenueMax"] = filters["revenue_max_usd"]
 
-    # Step 2 → launch company search phantom
-    response = launch_company_search(search_url)
+    query = urlencode(params)
 
-    container_id = response.get("containerId")
-
-    return {
-        "message": "SalesNav search started",
-        "search_url": search_url,
-        "container_id": container_id
-    }
-
+    return f"{base_url}?{query}"
