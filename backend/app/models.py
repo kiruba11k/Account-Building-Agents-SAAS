@@ -1,39 +1,41 @@
-from sqlalchemy import Column, Integer, String, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, JSON
 from .database import Base
 
 
 class LeadRequest(Base):
+
     __tablename__ = "lead_requests"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
 
     request_name = Column(String)
 
-    status = Column(String, default="Queued")
+    status = Column(String)
+
+    phase = Column(String)
+
+    progress = Column(Integer)
 
     container_id = Column(String)
 
-    phase = Column(String)   # search / scrape / completed
-
-    progress = Column(Integer, default=0)
-
-    total_results = Column(Integer, default=0)
+    total_results = Column(Integer)
 
     filters = Column(JSON)
 
 
 class Company(Base):
+
     __tablename__ = "companies"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
 
-    request_id = Column(Integer, ForeignKey("lead_requests.id"))
+    request_id = Column(Integer)
 
     name = Column(String)
-    linkedin_url = Column(String)
+
+    domain = Column(String)
 
     website = Column(String)
-    domain = Column(String)
 
     industry = Column(String)
 
@@ -43,4 +45,6 @@ class Company(Base):
 
     headquarters = Column(String)
 
-    confidence_score = Column(Integer)
+    linkedin_url = Column(String)
+
+    confidence_score = Column(String)
