@@ -1,20 +1,51 @@
 import { useState } from "react";
 import API from "../api";
+import { useNavigate } from "react-router-dom";
 
 export default function SalesNav() {
+
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const navigate = useNavigate();
+
   const launch = async () => {
+
+    if (!name) {
+      alert("Please enter request name");
+      return;
+    }
+
     setLoading(true);
-    await API.post("/api/run-salesnav", { request_name: name });
+
+    try {
+
+      const res = await API.post("/api/run-salesnav", {
+        request_name: name
+      });
+
+      const requestId = res.data.request_id;
+
+      // redirect to results page
+      navigate(`/results/${requestId}`);
+
+    } catch (err) {
+
+      console.error(err);
+      alert("Failed to launch agent");
+
+    }
+
     setLoading(false);
-    alert("SalesNav Launched!");
+
   };
 
   return (
+
     <div className="max-w-3xl">
+
       <div className="bg-white rounded-2xl shadow-lg p-8">
+
         <h3 className="text-xl font-semibold mb-6">
           Launch Sales Navigator Agent
         </h3>
@@ -28,11 +59,16 @@ export default function SalesNav() {
 
         <button
           onClick={launch}
-          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition"
+          disabled={loading}
+          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
         >
           {loading ? "Launching..." : "Launch Agent"}
         </button>
+
       </div>
+
     </div>
+
   );
+
 }
