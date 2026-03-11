@@ -1,5 +1,8 @@
+
+
 import requests
 import os
+import time
 
 PHANTOM_API_KEY = os.getenv("PHANTOM_API_KEY")
 
@@ -13,12 +16,17 @@ HEADERS = {
 SEARCH_AGENT_ID = os.getenv("PHANTOM_AGENT_ID")
 
 
+# --------------------------------------------------
+# Launch Phantom Agent
+# --------------------------------------------------
+
 def launch_company_search(search_url):
 
     payload = {
         "id": SEARCH_AGENT_ID,
         "argument": {
-            "searches": [search_url]
+            "searches": [search_url],
+            "numberOfResultsPerLaunch": 100
         }
     }
 
@@ -28,9 +36,17 @@ def launch_company_search(search_url):
         headers=HEADERS,
         timeout=30
     )
-    print("Phantom launch response:", r.text)
-    return r.json()
 
+    response = r.json()
+
+    print("Phantom launch response:", response)
+
+    return response
+
+
+# --------------------------------------------------
+# Check Container Status
+# --------------------------------------------------
 
 def get_container_status(container_id):
 
@@ -41,8 +57,16 @@ def get_container_status(container_id):
         timeout=30
     )
 
-    return r.json()
+    response = r.json()
 
+    print("Container status:", response)
+
+    return response
+
+
+# --------------------------------------------------
+# Fetch Phantom Output
+# --------------------------------------------------
 
 def fetch_container_output(container_id):
 
@@ -53,4 +77,8 @@ def fetch_container_output(container_id):
         timeout=30
     )
 
-    return r.json()
+    response = r.json()
+
+    print("Container output:", response)
+
+    return response
