@@ -20,6 +20,7 @@ export default function App() {
               <Route path="/google" element={<GoogleAgent />} />
               <Route path="/enrichment" element={<Enrichment />} />
               <Route path="/requests" element={<Requests />} />
+              <Route path="/results/:id" element={<Results />} />
             </Routes>
           </div>
         </div>
