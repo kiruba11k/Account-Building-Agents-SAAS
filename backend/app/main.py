@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-
+from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, engine, SessionLocal
 from .models import LeadRequest, Company
 
@@ -20,7 +20,13 @@ import pandas as pd
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # -------------------------------------------------
 # Resume unfinished jobs (Render sleep protection)
 # -------------------------------------------------
