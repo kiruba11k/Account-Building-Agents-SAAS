@@ -10,7 +10,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-SEARCH_AGENT_ID = os.getenv("PHANTOM_SEARCH_AGENT_ID")
+SEARCH_AGENT_ID = os.getenv("PHANTOM_AGENT_ID")
 
 
 def launch_company_search(search_url):
@@ -18,7 +18,7 @@ def launch_company_search(search_url):
     payload = {
         "id": SEARCH_AGENT_ID,
         "argument": {
-            "search": search_url
+            "searches": [search_url]
         }
     }
 
@@ -28,7 +28,7 @@ def launch_company_search(search_url):
         headers=HEADERS,
         timeout=30
     )
-
+    print("Phantom launch response:", r.text)
     return r.json()
 
 
