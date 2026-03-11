@@ -2,7 +2,6 @@ import { useState } from "react";
 import MultiValueInput from "../components/MultiValueInput";
 import API from "../api";
 import { useNavigate } from "react-router-dom";
-import MultiValueInput from "../components/MultiValueInput";
 
 export default function SalesNav() {
 
