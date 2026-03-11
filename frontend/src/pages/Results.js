@@ -115,6 +115,11 @@ export default function Results() {
         <button onClick={()=>setPage(page+1)}>
           Next
         </button>
+        <button
+  onClick={()=>navigate(`/results/${req.id}`)}
+>
+View Results
+</button>
 
       </div>
 
