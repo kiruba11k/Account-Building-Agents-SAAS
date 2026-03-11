@@ -10,7 +10,6 @@ from app.services.salesnav_builder import build_salesnav_company_search
 
 from app.phantom_service import (
     launch_company_search,
-    launch_company_scraper,
     get_container_status,
     fetch_container_output
 )
@@ -39,32 +38,13 @@ def resume_pending_jobs():
 
         print("Resuming job:", job.id)
 
-        if job.phase == "searching":
-            poll_search_and_scrape(job.id, job.container_id)
-
-        elif job.phase == "scraping":
-            poll_scraper_and_store(job.id, job.container_id)
+        poll_search_and_store(job.id, job.container_id)
 
     db.close()
 
 
 # -------------------------------------------------
-# Extract LinkedIn company URLs
-# -------------------------------------------------
-
-def extract_company_urls(results):
-
-    urls = []
-
-    for item in results:
-        if item.get("linkedInCompanyUrl"):
-            urls.append(item["linkedInCompanyUrl"])
-
-    return urls
-
-
-# -------------------------------------------------
-# DB dependency
+# Database dependency
 # -------------------------------------------------
 
 def get_db():
@@ -78,10 +58,10 @@ def get_db():
 
 
 # -------------------------------------------------
-# Poll Search Phantom
+# Poll Phantom and store results
 # -------------------------------------------------
 
-def poll_search_and_scrape(request_id, container_id):
+def poll_search_and_store(request_id, container_id):
 
     db = SessionLocal()
 
@@ -103,82 +83,15 @@ def poll_search_and_scrape(request_id, container_id):
             if status == "finished":
 
                 output = fetch_container_output(container_id)
-                search_results = output.get("data", [])
-
-                company_urls = extract_company_urls(search_results)
-
-                request.phase = "scraping"
-                request.progress = 60
-                db.commit()
-
-                if not company_urls:
-
-                    request.status = "Completed"
-                    request.total_results = 0
-                    request.progress = 100
-                    db.commit()
-
-                    return
-
-                print("Found company URLs:", len(company_urls))
-
-                scraper_response = launch_company_scraper(company_urls)
-
-                scraper_container = scraper_response.get("containerId")
-
-                request.container_id = scraper_container
-                request.phase = "scraping"
-                db.commit()
-
-                poll_scraper_and_store(request_id, scraper_container)
-
-                return
-
-            elif status == "error":
-
-                request.status = "Failed"
-                db.commit()
-
-                return
-
-            time.sleep(30)
-            attempts += 1
-
-        request.status = "Timeout"
-        db.commit()
-
-    finally:
-        db.close()
-
-
-# -------------------------------------------------
-# Poll Scraper Phantom
-# -------------------------------------------------
-
-def poll_scraper_and_store(request_id, container_id):
-
-    db = SessionLocal()
-
-    try:
-
-        attempts = 0
-
-        while attempts < 40:
-
-            status_response = get_container_status(container_id)
-            status = status_response.get("status")
-
-            if status == "finished":
-
-                output = fetch_container_output(container_id)
                 results = output.get("data", [])
 
-                request = db.query(LeadRequest).filter_by(id=request_id).first()
+                request.phase = "processing"
+                request.progress = 70
+                db.commit()
 
                 for item in results:
 
                     domain = extract_domain(item.get("website"))
-
                     confidence = calculate_confidence(item)
 
                     existing = db.query(Company).filter_by(
@@ -191,8 +104,8 @@ def poll_scraper_and_store(request_id, container_id):
 
                     company = Company(
                         request_id=request_id,
-                        name=item.get("name"),
-                        linkedin_url=item.get("linkedInCompanyUrl"),
+                        name=item.get("companyName"),
+                        linkedin_url=item.get("linkedInProfileUrl"),
                         website=item.get("website"),
                         domain=domain,
                         industry=item.get("industry"),
@@ -218,16 +131,13 @@ def poll_scraper_and_store(request_id, container_id):
 
             elif status == "error":
 
-                request = db.query(LeadRequest).filter_by(id=request_id).first()
                 request.status = "Failed"
                 db.commit()
-
                 return
 
             time.sleep(30)
             attempts += 1
 
-        request = db.query(LeadRequest).filter_by(id=request_id).first()
         request.status = "Timeout"
         db.commit()
 
@@ -236,7 +146,7 @@ def poll_scraper_and_store(request_id, container_id):
 
 
 # -------------------------------------------------
-# Run SalesNav Pipeline
+# Run SalesNav pipeline
 # -------------------------------------------------
 
 @app.post("/api/run-salesnav")
@@ -268,7 +178,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     db.commit()
 
     background_tasks.add_task(
-        poll_search_and_scrape,
+        poll_search_and_store,
         request.id,
         container_id
     )
