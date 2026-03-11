@@ -68,6 +68,9 @@ def poll_search_and_store(request_id, container_id):
     try:
 
         request = db.query(LeadRequest).filter_by(id=request_id).first()
+        if not request:
+            print("Request not found:", request_id)
+            return
 
         request.phase = "searching"
         request.progress = 25
@@ -77,8 +80,14 @@ def poll_search_and_store(request_id, container_id):
 
         while attempts < 40:
 
-            status_response = get_container_status(container_id)
-            status = status_response.get("status")
+            try:
+                status_response = get_container_status(container_id)
+                status = status_response.get("status")
+            except Exception as e:
+                print("Phantom status error:", e)
+                time.sleep(30)
+                attempts += 1
+                continue
 
             if status == "finished":
 
@@ -105,7 +114,7 @@ def poll_search_and_store(request_id, container_id):
                     company = Company(
                         request_id=request_id,
                         name=item.get("companyName"),
-                        linkedin_url=item.get("linkedInProfileUrl"),
+                        linkedin_url=item.get("linkedInCompanyUrl") or item.get("linkedInProfileUrl"),
                         website=item.get("website"),
                         domain=domain,
                         industry=item.get("industry"),
@@ -166,7 +175,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     search_url = build_salesnav_company_search(data)
 
-    print("SalesNav URL:", search_url)
+    print(f"[SalesNav] Generated URL: {search_url}")
 
     response = launch_company_search(search_url)
 
