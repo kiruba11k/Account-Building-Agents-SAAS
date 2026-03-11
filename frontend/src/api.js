@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: process.env.REACT_APP_API_URL
+  baseURL: "https://account-building-agents-saas-backend.onrender.com"
 });
 
 export default API;
