@@ -69,6 +69,34 @@ def build_salesnav_company_search(filters):
 
     base_url = f"https://www.linkedin.com/sales/search/{search_type}?query="
 
+    # Defensive fallbacks to avoid NameError in stale/deployed builds
+    split_values = globals().get("_split_values")
+    if not callable(split_values):
+        split_values = lambda value: [v.strip() for v in str(value or "").split(";") if v.strip()]
+
+    employee_to_size_id = globals().get("_employee_min_to_size_id")
+    if not callable(employee_to_size_id):
+        def employee_to_size_id(employee_min):
+            value = str(employee_min or "").strip()
+            if not value:
+                return None
+            if value in COMPANY_SIZE_MAP:
+                return COMPANY_SIZE_MAP[value]
+            if not value.isdigit():
+                return None
+            count = int(value)
+            for label, size_id in COMPANY_SIZE_MAP.items():
+                label = label.strip()
+                if label.endswith("+"):
+                    lower = label[:-1]
+                    if lower.isdigit() and count >= int(lower):
+                        return size_id
+                elif "-" in label:
+                    lower, upper = [p.strip() for p in label.split("-", 1)]
+                    if lower.isdigit() and upper.isdigit() and int(lower) <= count <= int(upper):
+                        return size_id
+            return None
+
     filter_parts = []
 
     # -------- Geography --------
