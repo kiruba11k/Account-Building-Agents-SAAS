@@ -11,11 +11,44 @@ if TAXONOMY_DIR not in sys.path:
 
 # 2. Load Mapping Files
 try:
-    from regions import REGIONS_MAP
-    from company_sizes import SIZE_MAP
+    from regions import REGION_MAP
+    from company_sizes import COMPANY_SIZE_MAP
     from revenue_ranges import REVENUE_MAP
 except ImportError:
-    REGIONS_MAP, SIZE_MAP, REVENUE_MAP = {}, {}, {}
+    REGION_MAP, COMPANY_SIZE_MAP, REVENUE_MAP = {}, {}, {}
+
+
+def _normalize_region_map():
+    return {k.strip().lower(): v for k, v in REGION_MAP.items()}
+
+
+def _employee_min_to_size_id(employee_min):
+    """Map a minimum employee count (e.g. "501") to Sales Navigator size bucket ID."""
+    if not employee_min:
+        return None
+
+    value = str(employee_min).strip()
+
+    if value in COMPANY_SIZE_MAP:
+        return COMPANY_SIZE_MAP[value]
+
+    if not value.isdigit():
+        return None
+
+    count = int(value)
+
+    for label, size_id in COMPANY_SIZE_MAP.items():
+        label = label.strip()
+        if label.endswith("+"):
+            lower = label[:-1]
+            if lower.isdigit() and count >= int(lower):
+                return size_id
+        elif "-" in label:
+            lower, upper = [p.strip() for p in label.split("-", 1)]
+            if lower.isdigit() and upper.isdigit() and int(lower) <= count <= int(upper):
+                return size_id
+
+    return None
 
 def load_industries():
     lookup = {}
@@ -29,6 +62,7 @@ def load_industries():
     return lookup
 
 INDUSTRY_LOOKUP = load_industries()
+REGION_LOOKUP = _normalize_region_map()
 
 def build_salesnav_company_search(filters):
     search_type = filters.get("search_type", "company")
@@ -45,7 +79,7 @@ def build_salesnav_company_search(filters):
 
     for c in countries:
 
-        gid = REGIONS_MAP.get(c)
+        gid = REGION_LOOKUP.get(c.lower())
 
         if gid:
             geo_ids.append(f"(id:{gid},selectionType:INCLUDED)")
@@ -83,7 +117,7 @@ def build_salesnav_company_search(filters):
 
     if emp:
 
-        size_id = SIZE_MAP.get(emp)
+        size_id = _employee_min_to_size_id(emp)
 
         if size_id:
 
