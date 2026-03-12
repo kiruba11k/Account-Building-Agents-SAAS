@@ -1,0 +1,10 @@
+REVENUE_MAP = {
+    "$0 - $1M": "REVENUE_0_1M",
+    "$1M - $10M": "REVENUE_1M_10M",
+    "$10M - $50M": "REVENUE_10M_50M",
+    "$50M - $100M": "REVENUE_50M_100M",
+    "$100M - $250M": "REVENUE_100M_250M",
+    "$250M - $500M": "REVENUE_250M_500M",
+    "$500M - $1B": "REVENUE_500M_1B",
+    "$1B+": "REVENUE_1B_PLUS"
+}
