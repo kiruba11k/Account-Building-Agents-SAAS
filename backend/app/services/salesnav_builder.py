@@ -22,13 +22,8 @@ def _normalize_region_map():
     return {k.strip().lower(): v for k, v in REGION_MAP.items()}
 
 
-def _split_values(value):
-    """Split ';' separated values and strip whitespace."""
-    return [v.strip() for v in str(value or "").split(";") if v.strip()]
-
-
 def _employee_min_to_size_id(employee_min):
-    """Map employee_min values to Sales Navigator company size IDs."""
+    """Map a minimum employee count (e.g. "501") to Sales Navigator size bucket ID."""
     if not employee_min:
         return None
 
@@ -55,7 +50,6 @@ def _employee_min_to_size_id(employee_min):
 
     return None
 
-
 def load_industries():
     lookup = {}
     csv_path = os.path.join(TAXONOMY_DIR, "industries.csv")
@@ -70,7 +64,6 @@ def load_industries():
 INDUSTRY_LOOKUP = load_industries()
 REGION_LOOKUP = _normalize_region_map()
 
-
 def build_salesnav_company_search(filters):
     search_type = filters.get("search_type", "company")
 
@@ -82,8 +75,11 @@ def build_salesnav_company_search(filters):
     countries = _split_values(filters.get("geo_country", ""))
 
     geo_ids = []
-    for country in countries:
-        gid = REGION_LOOKUP.get(country.lower())
+
+    for c in countries:
+
+        gid = REGION_LOOKUP.get(c.lower())
+
         if gid:
             geo_ids.append(f"(id:{gid},selectionType:INCLUDED)")
 
@@ -113,9 +109,17 @@ def build_salesnav_company_search(filters):
         if size_id and size_id not in size_ids:
             size_ids.append(size_id)
 
-    if size_ids:
-        size_values = ",".join(f"(id:{sid},selectionType:INCLUDED)" for sid in size_ids)
-        filter_parts.append(f"(type:COMPANY_HEADCOUNT,values:List({size_values}))")
+    emp = filters.get("employee_min")
+
+    if emp:
+
+        size_id = _employee_min_to_size_id(emp)
+
+        if size_id:
+
+            filter_parts.append(
+                f"(type:COMPANY_HEADCOUNT,values:List((id:{size_id},selectionType:INCLUDED)))"
+            )
 
     # -------- Revenue --------
     revenue = filters.get("revenue_min_usd")
