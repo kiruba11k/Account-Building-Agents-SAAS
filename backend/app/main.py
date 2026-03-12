@@ -11,7 +11,7 @@ from app.services.salesnav_builder import build_salesnav_company_search
 from app.phantom_service import (
     launch_company_search,
     get_container_status,
-    fetch_container_output
+    fetch_container_results
 )
 
 import time
@@ -97,8 +97,15 @@ def poll_search_and_store(request_id, container_id):
 
             if status == "finished":
 
-                output = fetch_container_output(container_id)
-                results = output.get("data", [])
+                exit_code = status_response.get("exitCode")
+                if exit_code not in (0, None):
+                    request.status = "Failed"
+                    request.phase = "failed"
+                    request.progress = 100
+                    db.commit()
+                    return
+
+                results = fetch_container_results(container_id)
 
                 request.phase = "processing"
                 request.progress = 70
@@ -132,14 +139,18 @@ def poll_search_and_store(request_id, container_id):
 
                     db.add(company)
 
-                request.status = "Completed"
-                request.phase = "completed"
-                request.progress = 100
-
                 request.total_results = db.query(Company).filter_by(
                     request_id=request_id
                 ).count()
 
+                if request.total_results == 0:
+                    request.status = "Failed"
+                    request.phase = "failed"
+                else:
+                    request.status = "Completed"
+                    request.phase = "completed"
+
+                request.progress = 100
                 db.commit()
 
                 return
@@ -183,11 +194,38 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
-    response = launch_company_search(search_url)
+    try:
+        response = launch_company_search(search_url, data)
+    except Exception as e:
+        request.status = "Failed"
+        request.phase = "failed"
+        request.progress = 100
+        db.commit()
+        return {
+            "request_id": request.id,
+            "search_url": search_url,
+            "error": f"Phantom launch failed: {e}",
+        }
 
-    container_id = response.get("containerId")
+    container_id = (
+        response.get("containerId")
+        or response.get("id")
+        or (response.get("data", {}) or {}).get("containerId")
+    )
 
-    request.container_id = container_id
+    if not container_id:
+        request.status = "Failed"
+        request.phase = "failed"
+        request.progress = 100
+        db.commit()
+        return {
+            "request_id": request.id,
+            "search_url": search_url,
+            "error": "Phantom launch did not return containerId",
+            "phantom_response": response,
+        }
+
+    request.container_id = str(container_id)
     request.status = "Running"
 
     db.commit()
@@ -195,7 +233,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     background_tasks.add_task(
         poll_search_and_store,
         request.id,
-        container_id
+        str(container_id)
     )
 
     return {
