@@ -132,10 +132,8 @@ def build_salesnav_company_search(filters):
 
     # -------- Revenue --------
     revenue = filters.get("revenue_min_usd")
-
     if revenue:
         rev_id = REVENUE_MAP.get(revenue)
-
         if rev_id:
             filter_parts.append(
                 f"(type:COMPANY_REVENUE,values:List((id:{rev_id},selectionType:INCLUDED)))"
@@ -143,7 +141,6 @@ def build_salesnav_company_search(filters):
 
     # -------- Build Query --------
     query_parts = []
-
     if filter_parts:
         query_parts.append(f"filters:List({','.join(filter_parts)})")
 
@@ -156,5 +153,4 @@ def build_salesnav_company_search(filters):
         return base_url.replace("?query=", "")
 
     final_query = f"({','.join(query_parts)})"
-
     return f"{base_url}{quote(final_query)}"
