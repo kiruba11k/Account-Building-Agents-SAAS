@@ -102,12 +102,16 @@ def build_salesnav_company_search(filters):
     # -------- Geography --------
     countries = _split_values(filters.get("geo_country", ""))
 
-    geo_ids = []
+        if not value.isdigit():
+            return None
 
-    for c in countries:
+        count = int(value)
 
         gid = REGION_LOOKUP.get(c.lower())
 
+    geo_ids = []
+    for country in countries:
+        gid = REGION_LOOKUP.get(country.lower())
         if gid:
             geo_ids.append(f"(id:{gid},selectionType:INCLUDED)")
 
@@ -137,9 +141,11 @@ def build_salesnav_company_search(filters):
         if size_id and size_id not in size_ids:
             size_ids.append(size_id)
 
-    emp = filters.get("employee_min")
-
-    if emp:
+    size_ids = []
+    for emp in employee_values:
+        size_id = employee_to_size_id(emp)
+        if size_id and size_id not in size_ids:
+            size_ids.append(size_id)
 
         size_id = _employee_min_to_size_id(emp)
 
