@@ -73,50 +73,6 @@ def fetch_container_results(container_id):
     return []
 
 
-def _parse_identities(raw):
-    if isinstance(raw, list):
-        return [str(x).strip() for x in raw if str(x).strip()]
-    if isinstance(raw, str):
-        return [x.strip() for x in raw.split(",") if x.strip()]
-    return []
-
-
-def _build_launch_argument(search_url, runtime_options=None):
-    options = runtime_options or {}
-
-    argument = {
-        # Different Sales Navigator Phantoms use different field names.
-        "searches": search_url,
-        "queries": [search_url],
-        "numberOfResultsPerLaunch": int(options.get("numberOfResultsPerLaunch", 100)),
-    }
-
-    session_cookie = (
-        options.get("sessionCookie")
-        or options.get("session_cookie")
-        or options.get("linkedin_session_cookie")
-        or os.getenv("PHANTOM_SESSION_COOKIE")
-        or os.getenv("LINKEDIN_SESSION_COOKIE")
-    )
-    identity_id = (
-        options.get("identityId")
-        or options.get("identity_id")
-        or os.getenv("PHANTOM_IDENTITY_ID")
-    )
-    identities = _parse_identities(
-        options.get("identities") or os.getenv("PHANTOM_IDENTITIES")
-    )
-
-    if session_cookie:
-        argument["sessionCookie"] = session_cookie
-    if identity_id:
-        argument["identityId"] = str(identity_id)
-    if identities:
-        argument["identities"] = identities
-
-    return argument
-
-
 # --------------------------------------------------
 # Launch Phantom Agent
 # --------------------------------------------------
@@ -125,8 +81,24 @@ def launch_company_search(search_url, runtime_options=None):
 
     payload = {
         "id": SEARCH_AGENT_ID,
-        "argument": _build_launch_argument(search_url, runtime_options)
+        "argument": {
+            # Different Sales Navigator Phantoms use different field names.
+            # Provide both compatible shapes to satisfy schema variants.
+            "searches": search_url,
+            "queries": [search_url],
+            "numberOfResultsPerLaunch": 100
+        }
     }
+
+    has_auth = any(
+        payload["argument"].get(k)
+        for k in ("sessionCookie", "identityId", "identities")
+    )
+    if not has_auth:
+        return {
+            "error": "Missing Phantom auth argument. Provide sessionCookie, identityId, or identities.",
+            "payload": payload,
+        }
 
     r = requests.post(
         f"{BASE_URL}/agents/launch",
