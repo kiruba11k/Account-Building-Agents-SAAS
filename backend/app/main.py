@@ -97,14 +97,6 @@ def poll_search_and_store(request_id, container_id):
 
             if status == "finished":
 
-                exit_code = status_response.get("exitCode")
-                if exit_code not in (0, None):
-                    request.status = "Failed"
-                    request.phase = "failed"
-                    request.progress = 100
-                    db.commit()
-                    return
-
                 results = fetch_container_results(container_id)
 
                 request.phase = "processing"
