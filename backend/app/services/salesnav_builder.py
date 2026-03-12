@@ -57,9 +57,9 @@ def load_industries():
         with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # Key fix: Map lowercase label to ID
                 lookup[row["label"].strip().lower()] = row["id"]
     return lookup
+
 
 INDUSTRY_LOOKUP = load_industries()
 REGION_LOOKUP = _normalize_region_map()
@@ -72,8 +72,7 @@ def build_salesnav_company_search(filters):
     filter_parts = []
 
     # -------- Geography --------
-
-    countries = [c.strip() for c in filters.get("geo_country","").split(";") if c.strip()]
+    countries = _split_values(filters.get("geo_country", ""))
 
     geo_ids = []
 
@@ -85,33 +84,30 @@ def build_salesnav_company_search(filters):
             geo_ids.append(f"(id:{gid},selectionType:INCLUDED)")
 
     if geo_ids:
+        geo_values = ",".join(geo_ids)
 
-        geo_key = "GEO_REGION" if search_type == "company" else "REGION"
-
-        filter_parts.append(
-            f"(type:{geo_key},values:List({','.join(geo_ids)}))"
-        )
+        geo_key = "REGION"
+        filter_parts.append(f"(type:{geo_key},values:List({geo_values}))")
 
     # -------- Industry --------
-
-    industries = [i.strip().lower() for i in filters.get("industry_include","").split(";") if i.strip()]
+    industries = [i.lower() for i in _split_values(filters.get("industry_include", ""))]
 
     ind_ids = []
-
     for ind in industries:
-
         iid = INDUSTRY_LOOKUP.get(ind)
-
         if iid:
             ind_ids.append(f"(id:{iid},selectionType:INCLUDED)")
 
     if ind_ids:
-
-        filter_parts.append(
-            f"(type:INDUSTRY,values:List({','.join(ind_ids)}))"
-        )
+        filter_parts.append(f"(type:INDUSTRY,values:List({','.join(ind_ids)}))")
 
     # -------- Company Size --------
+    employee_values = _split_values(filters.get("employee_min"))
+    size_ids = []
+    for emp in employee_values:
+        size_id = _employee_min_to_size_id(emp)
+        if size_id and size_id not in size_ids:
+            size_ids.append(size_id)
 
     emp = filters.get("employee_min")
 
@@ -126,36 +122,25 @@ def build_salesnav_company_search(filters):
             )
 
     # -------- Revenue --------
-
     revenue = filters.get("revenue_min_usd")
-
     if revenue:
-
         rev_id = REVENUE_MAP.get(revenue)
-
         if rev_id:
-
             filter_parts.append(
                 f"(type:COMPANY_REVENUE,values:List((id:{rev_id},selectionType:INCLUDED)))"
             )
 
     # -------- Build Query --------
-
     query_parts = []
-
     if filter_parts:
-
         query_parts.append(f"filters:List({','.join(filter_parts)})")
 
-    keywords = filters.get("keywords_include")
-
+    keywords = _split_values(filters.get("keywords_include"))
     if keywords:
-
-        query_parts.append(f"keywords:{keywords}")
+        query_parts.append(f"keywords:{' OR '.join(keywords)}")
 
     if not query_parts:
-
-        return base_url.replace("?query=","")
+        return base_url.replace("?query=", "")
 
     final_query = f"({','.join(query_parts)})"
 
