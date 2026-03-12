@@ -66,7 +66,6 @@ REGION_LOOKUP = _normalize_region_map()
 
 def build_salesnav_company_search(filters):
     search_type = filters.get("search_type", "company")
-
     base_url = f"https://www.linkedin.com/sales/search/{search_type}?query="
 
     # Defensive fallbacks to avoid NameError in stale/deployed builds
@@ -177,5 +176,4 @@ def build_salesnav_company_search(filters):
         return base_url.replace("?query=", "")
 
     final_query = f"({','.join(query_parts)})"
-
     return f"{base_url}{quote(final_query)}"
