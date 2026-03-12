@@ -97,14 +97,6 @@ def poll_search_and_store(request_id, container_id):
 
             if status == "finished":
 
-                exit_code = status_response.get("exitCode")
-                if exit_code not in (0, None):
-                    request.status = "Failed"
-                    request.phase = "failed"
-                    request.progress = 100
-                    db.commit()
-                    return
-
                 results = fetch_container_results(container_id)
 
                 request.phase = "processing"
@@ -194,18 +186,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
-    try:
-        response = launch_company_search(search_url, data)
-    except Exception as e:
-        request.status = "Failed"
-        request.phase = "failed"
-        request.progress = 100
-        db.commit()
-        return {
-            "request_id": request.id,
-            "search_url": search_url,
-            "error": f"Phantom launch failed: {e}",
-        }
+    response = launch_company_search(search_url, data)
 
     container_id = (
         response.get("containerId")
