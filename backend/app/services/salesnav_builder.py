@@ -3,81 +3,90 @@ import os
 import sys
 from urllib.parse import quote
 
-# 1. Setup the Path to your taxonomy folder
+# 1. Path Setup (points to your backend/app/services/linkedin_taxonomy/)
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 TAXONOMY_DIR = os.path.join(CURRENT_DIR, "linkedin_taxonomy")
 
-# Add TAXONOMY_DIR to sys.path so we can import .py files from it
 if TAXONOMY_DIR not in sys.path:
     sys.path.append(TAXONOMY_DIR)
 
-# 2. Import the dictionaries from your .py files
+# 2. Dynamic Imports with Error Handling
 try:
     from regions import REGIONS_MAP
     from company_sizes import SIZE_MAP
     from revenue_ranges import REVENUE_MAP
 except ImportError:
-    print("Warning: Could not find mapping files in linkedin_taxonomy folder.")
     REGIONS_MAP, SIZE_MAP, REVENUE_MAP = {}, {}, {}
 
-def load_industries_from_csv():
-    """Loads industry IDs from industries.csv inside the taxonomy folder"""
-    industry_lookup = {}
+def load_industries():
+    lookup = {}
     csv_path = os.path.join(TAXONOMY_DIR, "industries.csv")
-    
     if os.path.exists(csv_path):
         with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # Normalizing key to lowercase for easier matching
-                name = row["label"].strip().lower()
-                industry_lookup[name] = row["id"]
-    return industry_lookup
+                # Normalizing key: "Software Development" -> "software development"
+                lookup[row["label"].strip().lower()] = row["id"]
+    return lookup
 
-INDUSTRY_LOOKUP = load_industries_from_csv()
+INDUSTRY_LOOKUP = load_industries()
 
-def build_salesnav_company_search(filters):
-    base_url = "https://www.linkedin.com/sales/search/people?query="
+def build_salesnav_search(filters):
+    # Determine if this is a People or Company search
+    is_people = "people" in filters.get("search_type", "people")
+    base_url = f"https://www.linkedin.com/sales/search/{'people' if is_people else 'company'}?query="
+    
     filter_parts = []
 
-    # Geography Mapping
-    countries = [c.strip().lower() for c in filters.get("geo_country", "").split(";") if c.strip()]
-    geo_vals = []
+    # --- GEOGRAPHY ---
+    raw_geo = filters.get("geo_country", "")
+    countries = [c.strip().lower() for c in raw_geo.split(";") if c.strip()]
+    geo_ids = []
+    # Key change: Geography for People is REGION, for Company is GEO_REGION
+    geo_key = "REGION" if is_people else "GEO_REGION"
+    
     for c in countries:
-        # Check if the country name exists in your regions.py dictionary
-        geo_id = REGIONS_MAP.get(c) 
-        if geo_id:
-            geo_vals.append(f"(id:{geo_id},selectionType:INCLUDED)")
-    if geo_vals:
-        filter_parts.append(f"(type:REGION,values:List({','.join(geo_vals)}))")
+        gid = REGIONS_MAP.get(c) or next((v for k, v in REGIONS_MAP.items() if k.lower() == c), None)
+        if gid: geo_ids.append(f"(id:{gid},selectionType:INCLUDED)")
+    if geo_ids:
+        filter_parts.append(f"(type:{geo_key},values:List({','.join(geo_ids)}))")
 
-    # Industry Mapping
-    industries = [i.strip().lower() for i in filters.get("industry_include", "").split(";") if i.strip()]
-    ind_vals = []
+    # --- INDUSTRY ---
+    raw_ind = filters.get("industry_include", "")
+    industries = [i.strip().lower() for i in raw_ind.split(";") if i.strip()]
+    ind_ids = []
     for ind in industries:
-        ind_id = INDUSTRY_LOOKUP.get(ind)
-        if ind_id:
-            ind_vals.append(f"(id:{ind_id},selectionType:INCLUDED)")
-    if ind_vals:
-        filter_parts.append(f"(type:INDUSTRY,values:List({','.join(ind_vals)}))")
+        iid = INDUSTRY_LOOKUP.get(ind)
+        if iid: ind_ids.append(f"(id:{iid},selectionType:INCLUDED)")
+    if ind_ids:
+        filter_parts.append(f"(type:INDUSTRY,values:List({','.join(ind_ids)}))")
 
-    # Headcount (Size)
-    emp_min = str(filters.get("employee_min", ""))
-    hc_id = SIZE_MAP.get(emp_min)
-    if hc_id:
-        filter_parts.append(f"(type:COMPANY_HEADCOUNT,values:List((id:{hc_id},selectionType:INCLUDED)))")
+    # --- COMPANY SIZE (HEADCOUNT) ---
+    h_val = str(filters.get("employee_min", ""))
+    hid = SIZE_MAP.get(h_val)
+    if hid:
+        filter_parts.append(f"(type:COMPANY_HEADCOUNT,values:List((id:{hid},selectionType:INCLUDED)))")
 
-    # Revenue
-    revenue = str(filters.get("revenue_min_usd", ""))
-    rev_id = REVENUE_MAP.get(revenue)
-    if rev_id:
-        filter_parts.append(f"(type:COMPANY_REVENUE,values:List((id:{rev_id},selectionType:INCLUDED)))")
+    # --- REVENUE ---
+    r_val = str(filters.get("revenue_min_usd", ""))
+    rid = REVENUE_MAP.get(r_val)
+    if rid:
+        filter_parts.append(f"(type:COMPANY_REVENUE,values:List((id:{rid},selectionType:INCLUDED)))")
 
-    # Keyword and Final Construction
-    inner_query = f"filters:List({','.join(filter_parts)})"
+    # --- FINAL ASSEMBLY ---
+    # Construct the internal query parts
+    query_body_parts = []
+    if filter_parts:
+        query_body_parts.append(f"filters:List({','.join(filter_parts)})")
+    
     keywords = filters.get("keywords_include")
     if keywords:
-        inner_query += f",keywords:{keywords}"
+        query_body_parts.append(f"keywords:{keywords}")
 
-    # Return encoded URL
-    return f"{base_url}{quote('(' + inner_query + ')')}"
+    # If everything is empty, return base URL
+    if not query_body_parts:
+        return base_url.replace("?query=", "")
+
+    # Outer parentheses are MANDATORY for the query= parameter to work
+    final_query = f"({','.join(query_body_parts)})"
+    return f"{base_url}{quote(final_query)}"
