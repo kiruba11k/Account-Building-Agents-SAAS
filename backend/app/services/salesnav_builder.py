@@ -10,18 +10,20 @@ except ImportError:
     REGIONS_MAP, SIZE_MAP, REVENUE_MAP = {}, {}, {}
 
 
+import csv
+import os
+
 def load_industries_from_csv():
-    """
-    Load LinkedIn industry IDs from industries.csv
-    """
 
     industry_lookup = {}
 
-    csv_path = os.path.join(os.getcwd(), "app/data/industries.csv")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+
+    csv_path = os.path.join(current_dir, "industries.csv")
 
     if os.path.exists(csv_path):
 
-        with open(csv_path, mode="r", encoding="utf-8") as f:
+        with open(csv_path, "r", encoding="utf-8") as f:
 
             reader = csv.DictReader(f)
 
