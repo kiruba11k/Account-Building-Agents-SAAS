@@ -30,8 +30,7 @@ def load_industries():
 
 INDUSTRY_LOOKUP = load_industries()
 
-def build_salesnav_search(filters):
-
+def build_salesnav_company_search(filters):
     search_type = filters.get("search_type", "company")
 
     base_url = f"https://www.linkedin.com/sales/search/{search_type}?query="
