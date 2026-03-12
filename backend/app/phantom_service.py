@@ -1,7 +1,6 @@
-
+import os
 
 import requests
-import os
 
 PHANTOM_API_KEY = os.getenv("PHANTOM_API_KEY")
 
@@ -9,7 +8,7 @@ BASE_URL = "https://api.phantombuster.com/api/v2"
 
 HEADERS = {
     "X-Phantombuster-Key-1": PHANTOM_API_KEY,
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
 }
 
 SEARCH_AGENT_ID = os.getenv("PHANTOM_AGENT_ID")
@@ -141,6 +140,28 @@ def fetch_container_results(container_id):
 # --------------------------------------------------
 
 def launch_company_search(search_url, runtime_options=None):
+    runtime_options = _clean_runtime_options(runtime_options)
+
+    argument = {
+        "searches": search_url,
+        "numberOfResultsPerLaunch": runtime_options.get("numberOfResultsPerLaunch", 100),
+    }
+
+    # Keep old behavior available without forcing queries in every launch payload.
+    use_queries = _truthy(runtime_options.get("use_queries"))
+    if use_queries:
+        queries = runtime_options.get("queries")
+        if not isinstance(queries, list) or not queries:
+            queries = [search_url]
+        argument["queries"] = queries
+
+    for key in ("sessionCookie", "identityId", "identities"):
+        value = runtime_options.get(key)
+        if value:
+            argument[key] = value
+
+    if not any(argument.get(k) for k in ("sessionCookie", "identityId", "identities")):
+        argument.update(_get_fallback_auth_args())
 
     runtime_options = _clean_runtime_options(runtime_options)
 
@@ -176,13 +197,11 @@ def launch_company_search(search_url, runtime_options=None):
         "argument": argument,
     }
 
-    has_auth = any(
-        payload["argument"].get(k)
-        for k in ("sessionCookie", "identityId", "identities")
-    )
+    has_auth = any(payload["argument"].get(k) for k in ("sessionCookie", "identityId", "identities"))
     if not has_auth:
         return {
             "error": "Missing Phantom auth argument. Provide sessionCookie, identityId, or identities.",
+            "hint": "Set PHANTOM_IDENTITY_ID in backend env if your workspace API does not expose identities.",
             "payload": payload,
         }
 
@@ -219,12 +238,11 @@ def launch_company_search(search_url, runtime_options=None):
 # --------------------------------------------------
 
 def get_container_status(container_id):
-
     r = requests.get(
         f"{BASE_URL}/containers/fetch",
         params={"id": container_id},
         headers=HEADERS,
-        timeout=30
+        timeout=30,
     )
     r.raise_for_status()
 
@@ -240,12 +258,11 @@ def get_container_status(container_id):
 # --------------------------------------------------
 
 def fetch_container_output(container_id):
-
     r = requests.get(
         f"{BASE_URL}/containers/fetch-output",
         params={"id": container_id},
         headers=HEADERS,
-        timeout=30
+        timeout=30,
     )
     r.raise_for_status()
 
