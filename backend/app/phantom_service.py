@@ -106,6 +106,7 @@ def launch_company_search(search_url, runtime_options=None):
         headers=HEADERS,
         timeout=30
     )
+    r.raise_for_status()
 
     response = r.json()
 
@@ -126,6 +127,7 @@ def get_container_status(container_id):
         headers=HEADERS,
         timeout=30
     )
+    r.raise_for_status()
 
     response = r.json()
 
@@ -146,6 +148,7 @@ def fetch_container_output(container_id):
         headers=HEADERS,
         timeout=30
     )
+    r.raise_for_status()
 
     response = r.json()
 
