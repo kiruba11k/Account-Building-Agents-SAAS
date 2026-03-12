@@ -82,7 +82,10 @@ def launch_company_search(search_url):
     payload = {
         "id": SEARCH_AGENT_ID,
         "argument": {
-            "searches": [search_url],
+            # Different Sales Navigator Phantoms use different field names.
+            # Provide both compatible shapes to satisfy schema variants.
+            "searches": search_url,
+            "queries": [search_url],
             "numberOfResultsPerLaunch": 100
         }
     }

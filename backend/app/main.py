@@ -131,14 +131,18 @@ def poll_search_and_store(request_id, container_id):
 
                     db.add(company)
 
-                request.status = "Completed"
-                request.phase = "completed"
-                request.progress = 100
-
                 request.total_results = db.query(Company).filter_by(
                     request_id=request_id
                 ).count()
 
+                if request.total_results == 0:
+                    request.status = "Failed"
+                    request.phase = "failed"
+                else:
+                    request.status = "Completed"
+                    request.phase = "completed"
+
+                request.progress = 100
                 db.commit()
 
                 return
