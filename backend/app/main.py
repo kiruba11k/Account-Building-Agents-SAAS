@@ -186,7 +186,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
-    response = launch_company_search(search_url)
+    response = launch_company_search(search_url, data)
 
     container_id = (
         response.get("containerId")

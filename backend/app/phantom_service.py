@@ -77,7 +77,7 @@ def fetch_container_results(container_id):
 # Launch Phantom Agent
 # --------------------------------------------------
 
-def launch_company_search(search_url):
+def launch_company_search(search_url, runtime_options=None):
 
     payload = {
         "id": SEARCH_AGENT_ID,
@@ -89,6 +89,16 @@ def launch_company_search(search_url):
             "numberOfResultsPerLaunch": 100
         }
     }
+
+    has_auth = any(
+        payload["argument"].get(k)
+        for k in ("sessionCookie", "identityId", "identities")
+    )
+    if not has_auth:
+        return {
+            "error": "Missing Phantom auth argument. Provide sessionCookie, identityId, or identities.",
+            "payload": payload,
+        }
 
     r = requests.post(
         f"{BASE_URL}/agents/launch",
