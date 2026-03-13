@@ -26,23 +26,67 @@ def _truthy(value):
     return bool(value)
 
 
+def _get_agent_payload():
+    """Fetch and normalize agent payload for auth fallback extraction."""
+    agents_response = requests.get(
+        f"{BASE_URL}/agents/fetch",
+        params={"id": SEARCH_AGENT_ID},
+        headers=HEADERS,
+        timeout=30,
+    )
+    agents_response.raise_for_status()
+    payload = agents_response.json()
+
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, dict):
+            return data.get("agent") or data
+        if isinstance(payload.get("agent"), dict):
+            return payload.get("agent")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _get_auth_args_from_agent_config():
+    """Extract persisted auth args from the Phantom agent configuration."""
+    try:
+        agent_payload = _get_agent_payload()
+
+        candidate_args = [
+            agent_payload.get("argument"),
+            agent_payload.get("arguments"),
+            (agent_payload.get("setup") or {}).get("argument"),
+            (agent_payload.get("setup") or {}).get("arguments"),
+            ((agent_payload.get("configuration") or {}).get("argument")),
+            ((agent_payload.get("configuration") or {}).get("arguments")),
+        ]
+
+        for args in candidate_args:
+            if not isinstance(args, dict):
+                continue
+
+            auth = {}
+            for key in ("sessionCookie", "identityId", "identities"):
+                if args.get(key):
+                    auth[key] = args[key]
+
+            if auth:
+                return auth
+    except Exception as e:
+        print("Phantom auth lookup via /agents/fetch failed:", e)
+
+    return {}
+
+
 def _get_first_identity_from_api():
     """Try to infer a usable identityId from the connected Phantom account."""
     try:
-        agents_response = requests.get(
-            f"{BASE_URL}/agents/fetch",
-            params={"id": SEARCH_AGENT_ID},
-            headers=HEADERS,
-            timeout=30,
-        )
-        agents_response.raise_for_status()
-        agent_payload = agents_response.json()
+        agent_payload = _get_agent_payload()
 
         candidates = [
             agent_payload.get("identityId"),
-            (agent_payload.get("agent") or {}).get("identityId"),
-            ((agent_payload.get("data") or {}).get("agent") or {}).get("identityId"),
-            (agent_payload.get("data") or {}).get("identityId"),
+            (agent_payload.get("identity") or {}).get("id"),
+            (agent_payload.get("identity") or {}).get("identityId"),
+            (agent_payload.get("setup") or {}).get("identityId"),
         ]
         for candidate in candidates:
             if candidate:
@@ -79,7 +123,10 @@ def _get_first_identity_from_api():
 
 def _get_fallback_auth_args():
     """Return best-effort auth arguments when runtime options don't include them."""
-    fallback = {}
+    fallback = _get_auth_args_from_agent_config()
+
+    if any(fallback.get(k) for k in ("sessionCookie", "identityId", "identities")):
+        return fallback
 
     inferred_identity_id = (
         os.getenv("PHANTOM_IDENTITY_ID")
