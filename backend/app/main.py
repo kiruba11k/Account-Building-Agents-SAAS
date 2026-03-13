@@ -183,14 +183,14 @@ def poll_search_and_store(request_id, container_id):
 
                 return
 
-            elif status == "error":
+        elif status == "error":
 
-                request.status = "Failed"
-                db.commit()
-                return
+            request.status = "Failed"
+            db.commit()
+            return
 
-            time.sleep(30)
-            attempts += 1
+        time.sleep(30)
+        attempts += 1
 
         request.status = "Timeout"
         db.commit()
