@@ -77,6 +77,21 @@ def _get_first_identity_from_api():
     return None
 
 
+def _get_fallback_auth_args():
+    """Return best-effort auth arguments when runtime options don't include them."""
+    fallback = {}
+
+    inferred_identity_id = (
+        os.getenv("PHANTOM_IDENTITY_ID")
+        or os.getenv("PHANTOMBUSTER_IDENTITY_ID")
+        or _get_first_identity_from_api()
+    )
+    if inferred_identity_id:
+        fallback["identityId"] = inferred_identity_id
+
+    return fallback
+
+
 def _extract_output_url(payload):
     """Get downloadable output URL from various Phantombuster response shapes."""
     if not isinstance(payload, dict):
@@ -162,35 +177,6 @@ def launch_company_search(search_url, runtime_options=None):
 
     if not any(argument.get(k) for k in ("sessionCookie", "identityId", "identities")):
         argument.update(_get_fallback_auth_args())
-
-    runtime_options = _clean_runtime_options(runtime_options)
-
-    argument = {
-        "searches": search_url,
-        "numberOfResultsPerLaunch": runtime_options.get("numberOfResultsPerLaunch", 100),
-    }
-
-    # Keep old behavior available without forcing queries in every launch payload.
-    use_queries = _truthy(runtime_options.get("use_queries"))
-    if use_queries:
-        queries = runtime_options.get("queries")
-        if not isinstance(queries, list) or not queries:
-            queries = [search_url]
-        argument["queries"] = queries
-
-    for key in ("sessionCookie", "identityId", "identities"):
-        value = runtime_options.get(key)
-        if value:
-            argument[key] = value
-
-    if not argument.get("identityId") and not argument.get("identities") and not argument.get("sessionCookie"):
-        inferred_identity_id = (
-            os.getenv("PHANTOM_IDENTITY_ID")
-            or os.getenv("PHANTOMBUSTER_IDENTITY_ID")
-            or _get_first_identity_from_api()
-        )
-        if inferred_identity_id:
-            argument["identityId"] = inferred_identity_id
 
     payload = {
         "id": SEARCH_AGENT_ID,
