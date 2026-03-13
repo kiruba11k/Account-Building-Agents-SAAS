@@ -7,9 +7,7 @@ import requests
 
 PHANTOM_API_KEY = os.getenv("PHANTOM_API_KEY")
 PHANTOM_AGENT_ID = os.getenv("PHANTOM_AGENT_ID")
-
-# LinkedIn cookie (li_at)
-PHANTOM_SESSION_COOKIE = os.getenv("PHANTOM_SESSION_COOKIE")
+PHANTOM_IDENTITY_ID = os.getenv("PHANTOM_IDENTITY_ID")
 
 BASE_URL = "https://api.phantombuster.com/api/v2"
 
@@ -29,44 +27,52 @@ def launch_company_search(search_url):
         "id": PHANTOM_AGENT_ID,
         "argument": {
 
-            # Sales Navigator search URL
-            "searches": [search_url],
+            "inputType": "salesNavigatorSearchUrl",
 
-            # LinkedIn auth cookie
-            "sessionCookie": PHANTOM_SESSION_COOKIE,
+            "salesNavigatorSearchUrl": search_url,
 
-            # optional but recommended
-            "numberOfResultsPerLaunch": 100
+            "numberOfProfiles": 2500,
+            "numberOfResultsPerSearch": 2500,
+            "numberOfLinesPerLaunch": 10,
+            "removeDuplicateProfiles": False,
+
+            "identities": [
+                {
+                    "identityId": PHANTOM_IDENTITY_ID,
+                    "sessionCookie": "",
+                    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+                }
+            ]
         }
     }
 
     try:
 
-        response = requests.post(
+        r = requests.post(
             f"{BASE_URL}/agents/launch",
             json=payload,
             headers=HEADERS,
             timeout=30
         )
 
-        response.raise_for_status()
+        r.raise_for_status()
 
-        data = response.json()
+        response = r.json()
 
     except Exception as e:
 
-        data = {
+        response = {
             "error": str(e),
             "payload": payload
         }
 
-    print("Phantom launch response:", data)
+    print("Phantom launch response:", response)
 
-    return data
+    return response
 
 
 # --------------------------------------------------
-# Get Container Status
+# Check Container Status
 # --------------------------------------------------
 
 def get_container_status(container_id):
@@ -88,7 +94,7 @@ def get_container_status(container_id):
 
 
 # --------------------------------------------------
-# Fetch Container Output
+# Fetch Phantom Output
 # --------------------------------------------------
 
 def fetch_container_output(container_id):
@@ -110,7 +116,7 @@ def fetch_container_output(container_id):
 
 
 # --------------------------------------------------
-# Normalize Phantom Results
+# Normalize Results
 # --------------------------------------------------
 
 def fetch_container_results(container_id):
