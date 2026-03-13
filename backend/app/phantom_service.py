@@ -77,6 +77,28 @@ def _get_auth_args_from_agent_config():
     return {}
 
 
+def _get_default_agent_argument():
+    """Extract saved/default argument object from the Phantom agent setup."""
+    try:
+        agent_payload = _get_agent_payload()
+        candidate_args = [
+            agent_payload.get("argument"),
+            agent_payload.get("arguments"),
+            (agent_payload.get("setup") or {}).get("argument"),
+            (agent_payload.get("setup") or {}).get("arguments"),
+            ((agent_payload.get("configuration") or {}).get("argument")),
+            ((agent_payload.get("configuration") or {}).get("arguments")),
+        ]
+
+        for args in candidate_args:
+            if isinstance(args, dict) and args:
+                return dict(args)
+    except Exception as e:
+        print("Phantom default argument lookup via /agents/fetch failed:", e)
+
+    return {}
+
+
 def _get_first_identity_from_api():
     """Try to infer a usable identityId from the connected Phantom account."""
     try:
@@ -204,10 +226,14 @@ def fetch_container_results(container_id):
 def launch_company_search(search_url, runtime_options=None):
     runtime_options = _clean_runtime_options(runtime_options)
 
-    argument = {
-        "searches": search_url,
-        "numberOfResultsPerLaunch": runtime_options.get("numberOfResultsPerLaunch", 100),
-    }
+    # Start from saved Phantom setup so callers can trigger by URL only.
+    argument = _get_default_agent_argument()
+
+    argument["searches"] = search_url
+    argument["numberOfResultsPerLaunch"] = runtime_options.get(
+        "numberOfResultsPerLaunch",
+        argument.get("numberOfResultsPerLaunch", 100),
+    )
 
     # Keep old behavior available without forcing queries in every launch payload.
     use_queries = _truthy(runtime_options.get("use_queries"))
@@ -229,14 +255,6 @@ def launch_company_search(search_url, runtime_options=None):
         "id": SEARCH_AGENT_ID,
         "argument": argument,
     }
-
-    has_auth = any(payload["argument"].get(k) for k in ("sessionCookie", "identityId", "identities"))
-    if not has_auth:
-        return {
-            "error": "Missing Phantom auth argument. Provide sessionCookie, identityId, or identities.",
-            "hint": "Set PHANTOM_IDENTITY_ID in backend env if your workspace API does not expose identities.",
-            "payload": payload,
-        }
 
     try:
         r = requests.post(
