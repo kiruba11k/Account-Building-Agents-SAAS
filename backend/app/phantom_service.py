@@ -26,103 +26,55 @@ def _truthy(value):
     return bool(value)
 
 
-def _find_first_value_by_keys(payload, keys):
-    """Depth-first lookup for first non-empty value of keys in nested payloads."""
-    if isinstance(payload, dict):
-        for key in keys:
-            value = payload.get(key)
-            if value:
-                return value
-        for value in payload.values():
-            found = _find_first_value_by_keys(value, keys)
-            if found:
-                return found
-    elif isinstance(payload, list):
-        for item in payload:
-            found = _find_first_value_by_keys(item, keys)
-            if found:
-                return found
-    return None
-
-
-def _extract_auth_from_agent_payload(agent_payload):
-    """Extract auth args from /agents/fetch response when present."""
-    if not isinstance(agent_payload, dict):
-        return {}
-
-    auth = {}
-
-    identity_id = _find_first_value_by_keys(agent_payload, ("identityId", "identity_id"))
-    if identity_id:
-        auth["identityId"] = str(identity_id)
-
-    identities = _find_first_value_by_keys(agent_payload, ("identities", "identityIds"))
-    if isinstance(identities, list) and identities:
-        auth["identities"] = identities
-
-    session_cookie = _find_first_value_by_keys(
-        agent_payload,
-        ("sessionCookie", "session_cookie", "li_at", "liAt"),
-    )
-    if session_cookie:
-        auth["sessionCookie"] = str(session_cookie)
-
-    return auth
-
-
-def _lookup_identity_from_endpoint(path):
-    """Best-effort call to identity endpoints that vary by API version/workspace."""
+def _get_first_identity_from_api():
+    """Try to infer a usable identityId from the connected Phantom account."""
     try:
-        resp = requests.get(
-            f"{BASE_URL}/{path}",
-            headers=HEADERS,
-            timeout=30,
-        )
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        payload = resp.json()
-
-        identity_id = _find_first_value_by_keys(payload, ("identityId", "id"))
-        if identity_id:
-            return str(identity_id)
-    except Exception as e:
-        print(f"Phantom identity lookup via /{path} failed:", e)
-
-    return None
-
-
-def _get_fallback_auth_args():
-    """Try to infer usable launch auth fields from env and Phantom account data."""
-    auth = {}
-
-    env_identity_id = os.getenv("PHANTOM_IDENTITY_ID") or os.getenv("PHANTOMBUSTER_IDENTITY_ID")
-    if env_identity_id:
-        auth["identityId"] = env_identity_id
-        return auth
-
-    try:
-        agent_response = requests.get(
+        agents_response = requests.get(
             f"{BASE_URL}/agents/fetch",
             params={"id": SEARCH_AGENT_ID},
             headers=HEADERS,
             timeout=30,
         )
-        agent_response.raise_for_status()
-        auth.update(_extract_auth_from_agent_payload(agent_response.json()))
-        if any(auth.get(k) for k in ("sessionCookie", "identityId", "identities")):
-            return auth
+        agents_response.raise_for_status()
+        agent_payload = agents_response.json()
+
+        candidates = [
+            agent_payload.get("identityId"),
+            (agent_payload.get("agent") or {}).get("identityId"),
+            ((agent_payload.get("data") or {}).get("agent") or {}).get("identityId"),
+            (agent_payload.get("data") or {}).get("identityId"),
+        ]
+        for candidate in candidates:
+            if candidate:
+                return str(candidate)
     except Exception as e:
         print("Phantom identity lookup via /agents/fetch failed:", e)
 
-    # Identity endpoint names differ across tenants/API versions.
-    for endpoint in ("identities/fetch-all", "identity/fetch-all"):
-        identity_id = _lookup_identity_from_endpoint(endpoint)
-        if identity_id:
-            auth["identityId"] = identity_id
-            return auth
+    try:
+        identities_response = requests.get(
+            f"{BASE_URL}/identities/fetch-all",
+            headers=HEADERS,
+            timeout=30,
+        )
+        identities_response.raise_for_status()
+        identities_payload = identities_response.json()
 
-    return auth
+        identities = (
+            identities_payload.get("data")
+            or identities_payload.get("identities")
+            or identities_payload
+        )
+
+        if isinstance(identities, list):
+            for identity in identities:
+                if isinstance(identity, dict):
+                    identity_id = identity.get("id") or identity.get("identityId")
+                    if identity_id:
+                        return str(identity_id)
+    except Exception as e:
+        print("Phantom identity lookup via /identities/fetch-all failed:", e)
+
+    return None
 
 
 def _extract_output_url(payload):
@@ -209,14 +161,36 @@ def launch_company_search(search_url, runtime_options=None):
             argument[key] = value
 
     if not any(argument.get(k) for k in ("sessionCookie", "identityId", "identities")):
-        fallback_auth_getter = globals().get("_get_fallback_auth_args")
-        if callable(fallback_auth_getter):
-            try:
-                argument.update(fallback_auth_getter())
-            except Exception as e:
-                print("Phantom fallback auth resolution failed:", e)
-        else:
-            print("Phantom fallback auth resolver is unavailable; continuing without inferred auth")
+        argument.update(_get_fallback_auth_args())
+
+    runtime_options = _clean_runtime_options(runtime_options)
+
+    argument = {
+        "searches": search_url,
+        "numberOfResultsPerLaunch": runtime_options.get("numberOfResultsPerLaunch", 100),
+    }
+
+    # Keep old behavior available without forcing queries in every launch payload.
+    use_queries = _truthy(runtime_options.get("use_queries"))
+    if use_queries:
+        queries = runtime_options.get("queries")
+        if not isinstance(queries, list) or not queries:
+            queries = [search_url]
+        argument["queries"] = queries
+
+    for key in ("sessionCookie", "identityId", "identities"):
+        value = runtime_options.get(key)
+        if value:
+            argument[key] = value
+
+    if not argument.get("identityId") and not argument.get("identities") and not argument.get("sessionCookie"):
+        inferred_identity_id = (
+            os.getenv("PHANTOM_IDENTITY_ID")
+            or os.getenv("PHANTOMBUSTER_IDENTITY_ID")
+            or _get_first_identity_from_api()
+        )
+        if inferred_identity_id:
+            argument["identityId"] = inferred_identity_id
 
     payload = {
         "id": SEARCH_AGENT_ID,
