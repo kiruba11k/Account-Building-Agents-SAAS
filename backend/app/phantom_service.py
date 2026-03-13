@@ -77,6 +77,28 @@ def _get_auth_args_from_agent_config():
     return {}
 
 
+def _get_default_agent_argument():
+    """Extract saved/default argument object from the Phantom agent setup."""
+    try:
+        agent_payload = _get_agent_payload()
+        candidate_args = [
+            agent_payload.get("argument"),
+            agent_payload.get("arguments"),
+            (agent_payload.get("setup") or {}).get("argument"),
+            (agent_payload.get("setup") or {}).get("arguments"),
+            ((agent_payload.get("configuration") or {}).get("argument")),
+            ((agent_payload.get("configuration") or {}).get("arguments")),
+        ]
+
+        for args in candidate_args:
+            if isinstance(args, dict) and args:
+                return dict(args)
+    except Exception as e:
+        print("Phantom default argument lookup via /agents/fetch failed:", e)
+
+    return {}
+
+
 def _get_first_identity_from_api():
     """Try to infer a usable identityId from the connected Phantom account."""
     try:
@@ -159,33 +181,52 @@ def _extract_output_url(payload):
     return None
 
 
+def _find_first_list(payload):
+    """Find the first list of objects in an arbitrarily nested payload."""
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        preferred_keys = (
+            "data",
+            "results",
+            "items",
+            "resultObject",
+            "result",
+            "rows",
+            "companies",
+            "records",
+        )
+
+        for key in preferred_keys:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+
+        for value in payload.values():
+            found = _find_first_list(value)
+            if isinstance(found, list):
+                return found
+
+    return None
+
+
 def _download_json_output(url):
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     data = r.json()
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in ("data", "results", "items"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-    return []
+
+    found = _find_first_list(data)
+    return found if isinstance(found, list) else []
 
 
 def fetch_container_results(container_id):
     """Return normalized list of result items from Phantombuster output."""
     response = fetch_container_output(container_id)
 
-    if isinstance(response, dict):
-        direct_data = response.get("data")
-        if isinstance(direct_data, list):
-            return direct_data
-
-        for key in ("results", "items"):
-            value = response.get(key)
-            if isinstance(value, list):
-                return value
+    found = _find_first_list(response)
+    if isinstance(found, list):
+        return found
 
     output_url = _extract_output_url(response)
     if output_url:
@@ -204,10 +245,14 @@ def fetch_container_results(container_id):
 def launch_company_search(search_url, runtime_options=None):
     runtime_options = _clean_runtime_options(runtime_options)
 
-    argument = {
-        "searches": search_url,
-        "numberOfResultsPerLaunch": runtime_options.get("numberOfResultsPerLaunch", 100),
-    }
+    # Start from saved Phantom setup so callers can trigger by URL only.
+    argument = _get_default_agent_argument()
+
+    argument["searches"] = search_url
+    argument["numberOfResultsPerLaunch"] = runtime_options.get(
+        "numberOfResultsPerLaunch",
+        argument.get("numberOfResultsPerLaunch", 100),
+    )
 
     # Keep old behavior available without forcing queries in every launch payload.
     use_queries = _truthy(runtime_options.get("use_queries"))
@@ -229,14 +274,6 @@ def launch_company_search(search_url, runtime_options=None):
         "id": SEARCH_AGENT_ID,
         "argument": argument,
     }
-
-    has_auth = any(payload["argument"].get(k) for k in ("sessionCookie", "identityId", "identities"))
-    if not has_auth:
-        return {
-            "error": "Missing Phantom auth argument. Provide sessionCookie, identityId, or identities.",
-            "hint": "Set PHANTOM_IDENTITY_ID in backend env if your workspace API does not expose identities.",
-            "payload": payload,
-        }
 
     try:
         r = requests.post(

@@ -88,14 +88,14 @@ def poll_search_and_store(request_id, container_id):
 
             try:
                 status_response = get_container_status(container_id)
-                status = status_response.get("status")
+                status = str(status_response.get("status") or "").strip().lower()
             except Exception as e:
                 print("Phantom status error:", e)
                 time.sleep(30)
                 attempts += 1
                 continue
 
-            if status == "finished":
+            if status in {"finished", "success", "succeeded", "done"}:
 
                 results = fetch_container_results(container_id)
 
@@ -135,21 +135,19 @@ def poll_search_and_store(request_id, container_id):
                     request_id=request_id
                 ).count()
 
-                if request.total_results == 0:
-                    request.status = "Failed"
-                    request.phase = "failed"
-                else:
-                    request.status = "Completed"
-                    request.phase = "completed"
+                request.status = "Completed"
+                request.phase = "completed"
 
                 request.progress = 100
                 db.commit()
 
                 return
 
-            elif status == "error":
+            elif status in {"error", "failed", "aborted"}:
 
                 request.status = "Failed"
+                request.phase = "failed"
+                request.progress = 100
                 db.commit()
                 return
 
