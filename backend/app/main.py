@@ -84,7 +84,7 @@ def poll_search_and_store(request_id, container_id):
 
         attempts = 0
 
-        while attempts < 60:
+        while attempts < 80:
 
             try:
                 status_response = get_container_status(container_id)
@@ -95,42 +95,78 @@ def poll_search_and_store(request_id, container_id):
                 attempts += 1
                 continue
 
-            if status == "finished":
+        if status == "finished":
+        
+            results = fetch_container_results(container_id)
 
-                results = fetch_container_results(container_id)
+            request.phase = "processing"
+            request.progress = 70
+            db.commit()
 
-                request.phase = "processing"
-                request.progress = 70
-                db.commit()
+            for item in results:
+            
+                website = (
+                    item.get("companyWebsite")
+                    or item.get("website")
+                )
 
-                for item in results:
+                domain = extract_domain(website)
 
-                    domain = extract_domain(item.get("website"))
-                    confidence = calculate_confidence(item)
+                confidence = calculate_confidence(item)
 
-                    existing = db.query(Company).filter_by(
-                        request_id=request_id,
-                        domain=domain
-                    ).first()
+                existing = db.query(Company).filter_by(
+                    request_id=request_id,
+                    domain=domain
+                ).first()
 
-                    if existing:
-                        continue
+                if existing:
+                    continue
+                
+                company = Company(
+                
+                    request_id=request_id,
 
-                    company = Company(
-                        request_id=request_id,
-                        name=item.get("companyName"),
-                        linkedin_url=item.get("linkedInCompanyUrl") or item.get("linkedInProfileUrl"),
-                        website=item.get("website"),
-                        domain=domain,
-                        industry=item.get("industry"),
-                        headcount=item.get("employeeCountRange"),
-                        revenue=item.get("revenue"),
-                        headquarters=item.get("location"),
-                        confidence_score=confidence
-                    )
+                    name=(
+                        item.get("companyName")
+                        or item.get("name")
+                    ),
 
-                    db.add(company)
+                    linkedin_url=(
+                        item.get("companyLinkedinUrl")
+                        or item.get("linkedInCompanyUrl")
+                        or item.get("linkedinUrl")
+                    ),
 
+                    website=website,
+
+                    domain=domain,
+
+                    industry=(
+                        item.get("companyIndustry")
+                        or item.get("industry")
+                    ),
+
+                    headcount=(
+                        item.get("companyHeadcount")
+                        or item.get("employeeCountRange")
+                    ),
+
+                    revenue=(
+                        item.get("companyRevenue")
+                        or item.get("revenue")
+                    ),
+
+                    headquarters=(
+                        item.get("companyLocation")
+                        or item.get("location")
+                    ),
+
+                    confidence_score=confidence
+                )
+
+                db.add(company)
+
+                
                 request.total_results = db.query(Company).filter_by(
                     request_id=request_id
                 ).count()
