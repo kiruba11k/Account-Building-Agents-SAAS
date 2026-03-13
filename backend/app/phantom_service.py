@@ -8,6 +8,9 @@ import requests
 PHANTOM_API_KEY = os.getenv("PHANTOM_API_KEY")
 PHANTOM_AGENT_ID = os.getenv("PHANTOM_AGENT_ID")
 
+# LinkedIn cookie (li_at)
+PHANTOM_SESSION_COOKIE = os.getenv("PHANTOM_SESSION_COOKIE")
+
 BASE_URL = "https://api.phantombuster.com/api/v2"
 
 HEADERS = {
@@ -25,37 +28,45 @@ def launch_company_search(search_url):
     payload = {
         "id": PHANTOM_AGENT_ID,
         "argument": {
-            # Most Sales Navigator phantoms expect this field
-            "searches": [search_url]
+
+            # Sales Navigator search URL
+            "searches": [search_url],
+
+            # LinkedIn auth cookie
+            "sessionCookie": PHANTOM_SESSION_COOKIE,
+
+            # optional but recommended
+            "numberOfResultsPerLaunch": 100
         }
     }
 
     try:
-        r = requests.post(
+
+        response = requests.post(
             f"{BASE_URL}/agents/launch",
             json=payload,
             headers=HEADERS,
             timeout=30
         )
 
-        r.raise_for_status()
+        response.raise_for_status()
 
-        response = r.json()
+        data = response.json()
 
     except Exception as e:
 
-        response = {
+        data = {
             "error": str(e),
             "payload": payload
         }
 
-    print("Phantom launch response:", response)
+    print("Phantom launch response:", data)
 
-    return response
+    return data
 
 
 # --------------------------------------------------
-# Check Container Status
+# Get Container Status
 # --------------------------------------------------
 
 def get_container_status(container_id):
@@ -77,7 +88,7 @@ def get_container_status(container_id):
 
 
 # --------------------------------------------------
-# Fetch Phantom Output
+# Fetch Container Output
 # --------------------------------------------------
 
 def fetch_container_output(container_id):
