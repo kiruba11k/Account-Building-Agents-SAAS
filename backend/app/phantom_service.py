@@ -181,33 +181,52 @@ def _extract_output_url(payload):
     return None
 
 
+def _find_first_list(payload):
+    """Find the first list of objects in an arbitrarily nested payload."""
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        preferred_keys = (
+            "data",
+            "results",
+            "items",
+            "resultObject",
+            "result",
+            "rows",
+            "companies",
+            "records",
+        )
+
+        for key in preferred_keys:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+
+        for value in payload.values():
+            found = _find_first_list(value)
+            if isinstance(found, list):
+                return found
+
+    return None
+
+
 def _download_json_output(url):
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     data = r.json()
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in ("data", "results", "items"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-    return []
+
+    found = _find_first_list(data)
+    return found if isinstance(found, list) else []
 
 
 def fetch_container_results(container_id):
     """Return normalized list of result items from Phantombuster output."""
     response = fetch_container_output(container_id)
 
-    if isinstance(response, dict):
-        direct_data = response.get("data")
-        if isinstance(direct_data, list):
-            return direct_data
-
-        for key in ("results", "items"):
-            value = response.get(key)
-            if isinstance(value, list):
-                return value
+    found = _find_first_list(response)
+    if isinstance(found, list):
+        return found
 
     output_url = _extract_output_url(response)
     if output_url:
