@@ -25,6 +25,7 @@ def launch_company_search(search_url):
 
     payload = {
         "id": PHANTOM_AGENT_ID,
+        "clearCache": True,
         "argument": {
 
             "inputType": "salesNavigatorSearchUrl",
