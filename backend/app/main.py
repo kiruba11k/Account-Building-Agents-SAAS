@@ -84,7 +84,7 @@ def poll_search_and_store(request_id, container_id):
 
         attempts = 0
 
-        while attempts < 40:
+        while attempts < 60:
 
             try:
                 status_response = get_container_status(container_id)
@@ -191,13 +191,17 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
-    response = launch_company_search(search_url, data)
+    response = launch_company_search(search_url)
 
-    container_id = (
+    container_id = None
+
+    if isinstance(response, dict):
+
+        container_id = (
         response.get("containerId")
         or response.get("id")
         or (response.get("data", {}) or {}).get("containerId")
-    )
+        )
 
     if not container_id:
         request.status = "Failed"
@@ -237,6 +241,9 @@ def get_request_status(request_id: int, db: Session = Depends(get_db)):
 
     request = db.query(LeadRequest).filter_by(id=request_id).first()
 
+    if not request:
+        return {"error": "request not found"}
+
     return {
         "status": request.status,
         "phase": request.phase,
@@ -254,13 +261,11 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
 
     offset = (page - 1) * limit
 
-    results = db.query(Company).filter_by(
-        request_id=request_id
-    ).offset(offset).limit(limit).all()
+    query = db.query(Company).filter_by(request_id=request_id)
 
-    total = db.query(Company).filter_by(
-        request_id=request_id
-    ).count()
+    results = query.offset(offset).limit(limit).all()
+
+    total = query.count()
 
     return {
         "total": total,
