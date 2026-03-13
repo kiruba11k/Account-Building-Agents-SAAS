@@ -182,7 +182,12 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     db.commit()
     db.refresh(request)
 
-    search_url = build_salesnav_company_search(data)
+    # Allow direct Sales Navigator URLs for fully pre-configured Phantom agents.
+    search_url = (
+        data.get("search_url")
+        or data.get("sales_nav_url")
+        or build_salesnav_company_search(data)
+    )
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
