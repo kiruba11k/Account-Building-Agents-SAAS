@@ -16,6 +16,7 @@ from app.phantom_service import (
 
 import time
 import pandas as pd
+import threading
 
 Base.metadata.create_all(bind=engine)
 
@@ -33,20 +34,22 @@ app.add_middleware(
 
 @app.on_event("startup")
 def resume_pending_jobs():
-
     db = SessionLocal()
+    try:
+        pending = db.query(LeadRequest).filter(
+            LeadRequest.status == "Running"
+        ).all()
 
-    pending = db.query(LeadRequest).filter(
-        LeadRequest.status == "Running"
-    ).all()
+        for job in pending:
+            print("Resuming job:", job.id)
 
-    for job in pending:
-
-        print("Resuming job:", job.id)
-
-        poll_search_and_store(job.id, job.container_id)
-
-    db.close()
+            threading.Thread(
+                target=poll_search_and_store,
+                args=(job.id, job.container_id),
+                daemon=True
+            ).start()
+    finally:
+        db.close()
 
 
 # -------------------------------------------------
