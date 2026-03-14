@@ -73,6 +73,49 @@ def launch_company_search(search_url):
 
 
 # --------------------------------------------------
+# Clear previous Phantom output
+# --------------------------------------------------
+
+def clear_agent_output():
+
+    payload = {"id": PHANTOM_AGENT_ID}
+
+    # Phantombuster has used different endpoint names over time.
+    # Try known variants so a stale output object does not leak into new launches.
+    endpoints = [
+        "/agents/clear-output",
+        "/agents/delete-output"
+    ]
+
+    last_error = None
+
+    for endpoint in endpoints:
+        try:
+            r = requests.post(
+                f"{BASE_URL}{endpoint}",
+                json=payload,
+                headers=HEADERS,
+                timeout=30
+            )
+
+            if 200 <= r.status_code < 300:
+                response = r.json() if r.content else {"ok": True}
+                print("Phantom clear output response:", response)
+                return response
+
+            last_error = f"{endpoint} returned {r.status_code}: {r.text}"
+        except Exception as e:
+            last_error = f"{endpoint} failed: {str(e)}"
+
+    print("Phantom clear output warning:", last_error)
+
+    return {
+        "warning": "Unable to clear previous Phantom output",
+        "details": last_error
+    }
+
+
+# --------------------------------------------------
 # Check Container Status
 # --------------------------------------------------
 
