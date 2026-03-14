@@ -9,6 +9,7 @@ from app.services.company_utils import extract_domain, calculate_confidence
 from app.services.salesnav_builder import build_salesnav_company_search
 
 from app.phantom_service import (
+    clear_agent_output,
     launch_company_search,
     get_container_status,
     fetch_container_results
@@ -229,6 +230,8 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     )
 
     print(f"[SalesNav] Generated URL: {search_url}")
+
+    clear_agent_output()
 
     response = launch_company_search(search_url)
 
