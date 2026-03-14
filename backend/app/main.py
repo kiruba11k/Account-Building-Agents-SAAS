@@ -99,78 +99,79 @@ def poll_search_and_store(request_id, container_id):
                 attempts += 1
                 continue
 
-        if status == "finished":
-        
-            results = fetch_container_results(container_id)
+            if status == "finished":
 
-            request.phase = "processing"
-            request.progress = 70
-            db.commit()
+                results = fetch_container_results(container_id)
 
-            for item in results:
-            
-                website = (
-                    item.get("companyWebsite")
-                    or item.get("website")
-                )
+                request.phase = "processing"
+                request.progress = 70
+                db.commit()
 
-                domain = extract_domain(website)
+                for item in results:
 
-                confidence = calculate_confidence(item)
+                    website = (
+                        item.get("companyWebsite")
+                        or item.get("website")
+                    )
 
-                existing = db.query(Company).filter_by(
-                    request_id=request_id,
-                    domain=domain
-                ).first()
+                    domain = extract_domain(website)
 
-                if existing:
-                    continue
-                
-                company = Company(
-                
-                    request_id=request_id,
+                    confidence = calculate_confidence(item)
 
-                    name=(
-                        item.get("companyName")
-                        or item.get("name")
-                    ),
+                    existing = db.query(Company).filter_by(
+                        request_id=request_id,
+                        domain=domain
+                    ).first()
 
-                    linkedin_url=(
-                        item.get("companyLinkedinUrl")
-                        or item.get("linkedInCompanyUrl")
-                        or item.get("linkedinUrl")
-                    ),
+                    if existing:
+                        continue
 
-                    website=website,
+                    company = Company(
 
-                    domain=domain,
+                        request_id=request_id,
 
-                    industry=(
-                        item.get("companyIndustry")
-                        or item.get("industry")
-                    ),
+                        name=(
+                            item.get("companyName")
+                            or item.get("name")
+                        ),
 
-                    headcount=(
-                        item.get("companyHeadcount")
-                        or item.get("employeeCountRange")
-                    ),
+                        linkedin_url=(
+                            item.get("companyLinkedinUrl")
+                            or item.get("linkedInCompanyUrl")
+                            or item.get("linkedinUrl")
+                        ),
 
-                    revenue=(
-                        item.get("companyRevenue")
-                        or item.get("revenue")
-                    ),
+                        website=website,
 
-                    headquarters=(
-                        item.get("companyLocation")
-                        or item.get("location")
-                    ),
+                        domain=domain,
 
-                    confidence_score=confidence
-                )
+                        industry=(
+                            item.get("companyIndustry")
+                            or item.get("industry")
+                        ),
 
-                db.add(company)
+                        headcount=(
+                            item.get("companyHeadcount")
+                            or item.get("employeeCountRange")
+                        ),
 
-                
+                        revenue=(
+                            item.get("companyRevenue")
+                            or item.get("revenue")
+                        ),
+
+                        headquarters=(
+                            item.get("companyLocation")
+                            or item.get("location")
+                        ),
+
+                        confidence_score=confidence
+                    )
+
+                    db.add(company)
+
+                db.commit()
+
                 request.total_results = db.query(Company).filter_by(
                     request_id=request_id
                 ).count()
@@ -184,19 +185,21 @@ def poll_search_and_store(request_id, container_id):
 
                 request.progress = 100
                 db.commit()
-
                 return
 
-        elif status == "error":
+            if status == "error":
+                request.status = "Failed"
+                request.phase = "failed"
+                request.progress = 100
+                db.commit()
+                return
 
-            request.status = "Failed"
-            db.commit()
-            return
-
-        time.sleep(30)
-        attempts += 1
+            time.sleep(30)
+            attempts += 1
 
         request.status = "Timeout"
+        request.phase = "failed"
+        request.progress = 100
         db.commit()
 
     finally:
