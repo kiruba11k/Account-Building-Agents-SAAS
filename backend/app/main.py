@@ -76,49 +76,6 @@ def _model_to_dict(model):
         for column in model.__table__.columns
     }
 
-def _normalize_key(value):
-
-    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
-
-
-def _normalize_row(item):
-
-    if not isinstance(item, dict):
-        return {}
-
-    normalized = {}
-
-    for key, value in item.items():
-        normalized[_normalize_key(key)] = value
-
-    return normalized
-
-
-def _pick(item, *keys):
-
-    normalized = _normalize_row(item)
-
-    for key in keys:
-        value = normalized.get(_normalize_key(key))
-        if value is None:
-            continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        return value
-
-    return None
-
-
-def _to_text(value):
-
-    if value is None:
-        return None
-
-    text = str(value).strip()
-
-    return text or None
-
-
 
 # -------------------------------------------------
 # Poll Phantom and store results
@@ -168,39 +125,29 @@ def poll_search_and_store(request_id, container_id):
 
                 for item in results:
 
-                    linkedin_url = _to_text(_pick(
-                        item,
-                        "companyLinkedinUrl",
-                        "companyUrl",
-                        "regularCompanyUrl",
-                        "linkedInCompanyUrl",
-                        "linkedinUrl",
-                    ))
+                    linkedin_url = (
+                        item.get("companyLinkedinUrl")
+                        or item.get("companyUrl")
+                        or item.get("regularCompanyUrl")
+                        or item.get("linkedInCompanyUrl")
+                        or item.get("linkedinUrl")
+                    )
 
-                    website = _to_text(_pick(
-                        item,
-                        "companyWebsite",
-                        "website",
-                        "companyDomain",
-                    ))
-
-                    if website and website.startswith("www."):
-                        website = f"https://{website}"
-
-                    name = _to_text(_pick(item, "companyName", "name"))
-                    industry = _to_text(_pick(item, "companyIndustry", "industry"))
-                    headcount = _to_text(_pick(item, "companyHeadcount", "employeesCount", "employeeCountRange"))
-                    revenue = _to_text(_pick(item, "companyRevenue", "revenue"))
-                    headquarters = _to_text(_pick(item, "companyLocation", "location"))
+                    website = (
+                        item.get("companyWebsite")
+                        or item.get("website")
+                        or item.get("companyDomain")
+                    )
 
                     domain = extract_domain(website)
 
-                    if (not domain) and linkedin_url:
-                        domain = extract_domain(linkedin_url)
-
                     normalized_linkedin = (linkedin_url or "").strip().lower()
                     normalized_domain = (domain or "").strip().lower()
-                    normalized_name = (name or "").strip().lower()
+                    normalized_name = (
+                        item.get("companyName")
+                        or item.get("name")
+                        or ""
+                    ).strip().lower()
 
                     fingerprint = None
 
@@ -214,14 +161,7 @@ def poll_search_and_store(request_id, container_id):
                     if fingerprint and fingerprint in seen_fingerprints:
                         continue
 
-                    confidence_payload = {
-                        "website": website,
-                        "industry": industry,
-                        "employeeCountRange": headcount,
-                        "revenue": revenue,
-                        "location": headquarters,
-                    }
-                    confidence = calculate_confidence(confidence_payload)
+                    confidence = calculate_confidence(item)
 
                     company = Company(
 
@@ -413,20 +353,9 @@ def get_requests(db: Session = Depends(get_db)):
 @app.get("/api/download/{request_id}")
 def download_csv(request_id: int, format: str = "csv", db: Session = Depends(get_db)):
 
-    request = db.query(LeadRequest).filter_by(id=request_id).first()
+    companies = db.query(Company).filter_by(request_id=request_id).all()
 
-    data = []
-
-    if request and request.container_id:
-        try:
-            # Prefer raw Phantom rows so exported columns match actual source output.
-            data = fetch_container_results(request.container_id)
-        except Exception as e:
-            print(f"download fetch_container_results failed for request {request_id}: {e}")
-
-    if not data:
-        companies = db.query(Company).filter_by(request_id=request_id).all()
-        data = [_model_to_dict(c) for c in companies]
+    data = [_model_to_dict(c) for c in companies]
 
     df = pd.DataFrame(data)
 
