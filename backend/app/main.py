@@ -234,12 +234,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
-    clear_response = clear_agent_output()
-
-    if isinstance(clear_response, dict) and clear_response.get("warning"):
-        # Do not block launch when cleanup endpoint is unavailable;
-        # some Phantom API plans/versions still allow clean runs via launch options.
-        print("Phantom clear output warning, continuing with launch:", clear_response)
+    clear_agent_output()
 
     response = launch_company_search(search_url)
 

@@ -81,31 +81,32 @@ def clear_agent_output():
 
     payload = {"id": PHANTOM_AGENT_ID}
 
-    # Phantombuster endpoints/parameter styles may differ across API versions.
-    attempts = [
-        ("post", "/agents/clear-output", {"json": payload}),
-        ("post", "/agents/delete-output", {"json": payload}),
-        ("post", "/agents/clearOutput", {"json": payload}),
-        ("post", "/agents/clear-output", {"params": payload}),
-        ("post", "/agents/delete-output", {"params": payload}),
-        ("post", "/agents/clearOutput", {"params": payload}),
+    # Phantombuster has used different endpoint names over time.
+    # Try known variants so a stale output object does not leak into new launches.
+    endpoints = [
+        "/agents/clear-output",
+        "/agents/delete-output"
     ]
 
     last_error = None
 
-    for method, endpoint, kwargs in attempts:
+    for endpoint in endpoints:
         try:
-            request_fn = getattr(requests, method)
-            r = request_fn(f"{BASE_URL}{endpoint}", headers=HEADERS, timeout=30, **kwargs)
+            r = requests.post(
+                f"{BASE_URL}{endpoint}",
+                json=payload,
+                headers=HEADERS,
+                timeout=30
+            )
 
             if 200 <= r.status_code < 300:
                 response = r.json() if r.content else {"ok": True}
                 print("Phantom clear output response:", response)
                 return response
 
-            last_error = f"{method.upper()} {endpoint} returned {r.status_code}: {r.text}"
+            last_error = f"{endpoint} returned {r.status_code}: {r.text}"
         except Exception as e:
-            last_error = f"{method.upper()} {endpoint} failed: {str(e)}"
+            last_error = f"{endpoint} failed: {str(e)}"
 
     print("Phantom clear output warning:", last_error)
 
