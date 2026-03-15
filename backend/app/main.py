@@ -69,6 +69,57 @@ def get_db():
         db.close()
 
 
+def _model_to_dict(model):
+
+    return {
+        column.name: getattr(model, column.name)
+        for column in model.__table__.columns
+    }
+
+def _normalize_key(value):
+
+    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
+
+def _normalize_row(item):
+
+    if not isinstance(item, dict):
+        return {}
+
+    normalized = {}
+
+    for key, value in item.items():
+        normalized[_normalize_key(key)] = value
+
+    return normalized
+
+
+def _pick(item, *keys):
+
+    normalized = _normalize_row(item)
+
+    for key in keys:
+        value = normalized.get(_normalize_key(key))
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+
+    return None
+
+
+def _to_text(value):
+
+    if value is None:
+        return None
+
+    text = str(value).strip()
+
+    return text or None
+
+
+
 # -------------------------------------------------
 # Poll Phantom and store results
 # -------------------------------------------------
@@ -113,71 +164,92 @@ def poll_search_and_store(request_id, container_id):
                 request.progress = 70
                 db.commit()
 
+                seen_fingerprints = set()
+
                 for item in results:
 
-                    website = (
-                        item.get("companyWebsite")
-                        or item.get("website")
-                    )
+                    linkedin_url = _to_text(_pick(
+                        item,
+                        "companyLinkedinUrl",
+                        "companyUrl",
+                        "regularCompanyUrl",
+                        "linkedInCompanyUrl",
+                        "linkedinUrl",
+                    ))
+
+                    website = _to_text(_pick(
+                        item,
+                        "companyWebsite",
+                        "website",
+                        "companyDomain",
+                    ))
+
+                    if website and website.startswith("www."):
+                        website = f"https://{website}"
+
+                    name = _to_text(_pick(item, "companyName", "name"))
+                    industry = _to_text(_pick(item, "companyIndustry", "industry"))
+                    headcount = _to_text(_pick(item, "companyHeadcount", "employeesCount", "employeeCountRange"))
+                    revenue = _to_text(_pick(item, "companyRevenue", "revenue"))
+                    headquarters = _to_text(_pick(item, "companyLocation", "location"))
 
                     domain = extract_domain(website)
 
-                    confidence = calculate_confidence(item)
+                    if (not domain) and linkedin_url:
+                        domain = extract_domain(linkedin_url)
 
-                    existing = db.query(Company).filter_by(
-                        request_id=request_id,
-                        domain=domain
-                    ).first()
+                    normalized_linkedin = (linkedin_url or "").strip().lower()
+                    normalized_domain = (domain or "").strip().lower()
+                    normalized_name = (name or "").strip().lower()
 
-                    if existing:
+                    fingerprint = None
+
+                    if normalized_linkedin:
+                        fingerprint = f"linkedin:{normalized_linkedin}"
+                    elif normalized_domain and normalized_domain != "linkedin.com":
+                        fingerprint = f"domain:{normalized_domain}"
+                    elif normalized_name:
+                        fingerprint = f"name:{normalized_name}"
+
+                    if fingerprint and fingerprint in seen_fingerprints:
                         continue
+
+                    confidence_payload = {
+                        "website": website,
+                        "industry": industry,
+                        "employeeCountRange": headcount,
+                        "revenue": revenue,
+                        "location": headquarters,
+                    }
+                    confidence = calculate_confidence(confidence_payload)
 
                     company = Company(
 
                         request_id=request_id,
 
-                        name=(
-                            item.get("companyName")
-                            or item.get("name")
-                        ),
+                        name=name,
 
-                        linkedin_url=(
-                            item.get("companyLinkedinUrl")
-                            or item.get("companyUrl")
-                            or item.get("regularCompanyUrl")
-                            or item.get("linkedInCompanyUrl")
-                            or item.get("linkedinUrl")
-                        ),
+                        linkedin_url=linkedin_url,
 
                         website=website,
 
                         domain=domain,
 
-                        industry=(
-                            item.get("companyIndustry")
-                            or item.get("industry")
-                        ),
+                        industry=industry,
 
-                        headcount=(
-                            item.get("companyHeadcount")
-                            or item.get("employeesCount")
-                            or item.get("employeeCountRange")
-                        ),
+                        headcount=headcount,
 
-                        revenue=(
-                            item.get("companyRevenue")
-                            or item.get("revenue")
-                        ),
+                        revenue=revenue,
 
-                        headquarters=(
-                            item.get("companyLocation")
-                            or item.get("location")
-                        ),
+                        headquarters=headquarters,
 
                         confidence_score=confidence
                     )
 
                     db.add(company)
+
+                    if fingerprint:
+                        seen_fingerprints.add(fingerprint)
 
                 db.commit()
 
@@ -312,7 +384,7 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
 
     query = db.query(Company).filter_by(request_id=request_id)
 
-    results = query.offset(offset).limit(limit).all()
+    rows = query.offset(offset).limit(limit).all()
 
     total = query.count()
 
@@ -320,7 +392,7 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
         "total": total,
         "page": page,
         "limit": limit,
-        "results": results
+        "results": [_model_to_dict(row) for row in rows]
     }
 
 
@@ -330,7 +402,8 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
 
 @app.get("/api/requests")
 def get_requests(db: Session = Depends(get_db)):
-    return db.query(LeadRequest).all()
+    rows = db.query(LeadRequest).all()
+    return [_model_to_dict(row) for row in rows]
 
 
 # -------------------------------------------------
@@ -338,23 +411,35 @@ def get_requests(db: Session = Depends(get_db)):
 # -------------------------------------------------
 
 @app.get("/api/download/{request_id}")
-def download_csv(request_id: int, db: Session = Depends(get_db)):
+def download_csv(request_id: int, format: str = "csv", db: Session = Depends(get_db)):
 
-    companies = db.query(Company).filter_by(request_id=request_id).all()
+    request = db.query(LeadRequest).filter_by(id=request_id).first()
 
-    data = [{
-        "Company": c.name,
-        "Domain": c.domain,
-        "Industry": c.industry,
-        "Employees": c.headcount,
-        "Revenue": c.revenue,
-        "Location": c.headquarters,
-        "Website": c.website,
-        "LinkedIn": c.linkedin_url,
-        "Confidence": c.confidence_score
-    } for c in companies]
+    data = []
+
+    if request and request.container_id:
+        try:
+            # Prefer raw Phantom rows so exported columns match actual source output.
+            data = fetch_container_results(request.container_id)
+        except Exception as e:
+            print(f"download fetch_container_results failed for request {request_id}: {e}")
+
+    if not data:
+        companies = db.query(Company).filter_by(request_id=request_id).all()
+        data = [_model_to_dict(c) for c in companies]
 
     df = pd.DataFrame(data)
+
+    output_format = (format or "csv").strip().lower()
+
+    if output_format == "xlsx":
+        file_path = f"/tmp/request_{request_id}.xlsx"
+        df.to_excel(file_path, index=False)
+        return FileResponse(
+            file_path,
+            filename=f"salesnav_{request_id}.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     file_path = f"/tmp/request_{request_id}.csv"
 
