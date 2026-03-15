@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 
 # --------------------------------------------------
@@ -15,6 +16,79 @@ HEADERS = {
     "X-Phantombuster-Key-1": PHANTOM_API_KEY,
     "Content-Type": "application/json"
 }
+
+
+def _post_to_first_success(endpoint_candidates, payload, action_name):
+
+    errors = []
+
+    for endpoint in endpoint_candidates:
+        try:
+            r = requests.post(
+                f"{BASE_URL}{endpoint}",
+                json=payload,
+                headers=HEADERS,
+                timeout=30
+            )
+
+            if 200 <= r.status_code < 300:
+                response = r.json() if r.content else {"ok": True}
+                print(f"Phantom {action_name} response:", response)
+                return response
+
+            errors.append({
+                "endpoint": endpoint,
+                "status_code": r.status_code,
+                "body": r.text
+            })
+        except Exception as e:
+            errors.append({
+                "endpoint": endpoint,
+                "error": str(e)
+            })
+
+    only_not_found = errors and all(
+        isinstance(item.get("status_code"), int) and item.get("status_code") == 404
+        for item in errors
+    )
+
+    if only_not_found:
+        print(f"Phantom {action_name} info: clear endpoint not available on this API version")
+        return {
+            "info": f"No supported endpoint found to {action_name}",
+            "details": errors
+        }
+
+    print(f"Phantom {action_name} warning:", errors)
+
+    return {
+        "warning": f"Unable to {action_name} on Phantom agent",
+        "details": errors
+    }
+
+
+def extract_container_id(response):
+
+    if not isinstance(response, dict):
+        return None
+
+    candidates = [
+        response.get("containerId"),
+        (response.get("data") or {}).get("containerId"),
+        (response.get("container") or {}).get("id"),
+        (response.get("data") or {}).get("id") if isinstance(response.get("data"), dict) else None,
+    ]
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+
+        candidate_str = str(candidate).strip()
+
+        if re.fullmatch(r"\d+", candidate_str):
+            return candidate_str
+
+    return None
 
 
 # --------------------------------------------------
@@ -85,35 +159,27 @@ def clear_agent_output():
     # Try known variants so a stale output object does not leak into new launches.
     endpoints = [
         "/agents/clear-output",
-        "/agents/delete-output"
+        "/agent/clear-output",
+        "/agents/delete-output",
+        "/agent/delete-output"
     ]
 
-    last_error = None
+    return _post_to_first_success(endpoints, payload, "clear output")
 
-    for endpoint in endpoints:
-        try:
-            r = requests.post(
-                f"{BASE_URL}{endpoint}",
-                json=payload,
-                headers=HEADERS,
-                timeout=30
-            )
 
-            if 200 <= r.status_code < 300:
-                response = r.json() if r.content else {"ok": True}
-                print("Phantom clear output response:", response)
-                return response
+def clear_agent_cache():
 
-            last_error = f"{endpoint} returned {r.status_code}: {r.text}"
-        except Exception as e:
-            last_error = f"{endpoint} failed: {str(e)}"
+    payload = {"id": PHANTOM_AGENT_ID}
 
-    print("Phantom clear output warning:", last_error)
+    # Cache reset endpoint names may vary by API version.
+    endpoints = [
+        "/agents/clear-cache",
+        "/agent/clear-cache",
+        "/agents/delete-cache",
+        "/agent/delete-cache"
+    ]
 
-    return {
-        "warning": "Unable to clear previous Phantom output",
-        "details": last_error
-    }
+    return _post_to_first_success(endpoints, payload, "clear cache")
 
 
 # --------------------------------------------------

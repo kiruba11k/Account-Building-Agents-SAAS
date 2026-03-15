@@ -12,6 +12,14 @@ export default function Results() {
   const [page, setPage] = useState(1);
   const limit = 50;
 
+  useEffect(() => {
+
+    setPage(1);
+    setStatus({});
+    setResults([]);
+
+  }, [id]);
+
   const loadStatus = async () => {
 
     const res = await api.get(`/api/request/${id}`);
@@ -44,7 +52,7 @@ export default function Results() {
 
     return () => clearInterval(interval);
 
-  }, [page]);
+  }, [id, page]);
 
   return (
 
@@ -115,11 +123,6 @@ export default function Results() {
         <button onClick={()=>setPage(page+1)}>
           Next
         </button>
-        <button
-  onClick={()=>navigate(`/results/${req.id}`)}
->
-View Results
-</button>
 
       </div>
 
