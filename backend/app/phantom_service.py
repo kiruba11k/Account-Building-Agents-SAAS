@@ -95,9 +95,10 @@ def launch_company_search(search_url):
 
             "identities": [
                 {
+                    # Reuse the authenticated PhantomBuster identity that was
+                    # connected manually once. Passing empty session cookies can
+                    # override stored identity sessions and force re-auth.
                     "identityId": PHANTOM_IDENTITY_ID,
-                    "sessionCookie": "",
-                    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
                 }
             ]
         }
@@ -142,7 +143,7 @@ def clear_agent_output():
         "/agents/clear-output",
         "/agent/clear-output",
         "/agents/delete-output",
-        "/agent/delete-output"
+        "/agent/delete-output",
     ]
 
     return _post_to_first_success(endpoints, payload, "clear output")
@@ -155,7 +156,9 @@ def clear_agent_cache():
     # Cache reset endpoint names may vary by API version.
     endpoints = [
         "/agents/clear-cache",
-        "/agents/delete-cache"
+        "/agent/clear-cache",
+        "/agents/delete-cache",
+        "/agent/delete-cache",
     ]
 
     return _post_to_first_success(endpoints, payload, "clear cache")
