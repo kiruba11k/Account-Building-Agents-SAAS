@@ -234,19 +234,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
-    clear_response = clear_agent_output()
-
-    if isinstance(clear_response, dict) and clear_response.get("warning"):
-        request.status = "Failed"
-        request.phase = "failed"
-        request.progress = 100
-        db.commit()
-        return {
-            "request_id": request.id,
-            "search_url": search_url,
-            "error": "Could not clear previous Phantom output. Launch cancelled to prevent mixed results.",
-            "phantom_clear_response": clear_response,
-        }
+    clear_agent_output()
 
     response = launch_company_search(search_url)
 
