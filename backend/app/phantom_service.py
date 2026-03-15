@@ -20,7 +20,7 @@ HEADERS = {
 
 def _post_to_first_success(endpoint_candidates, payload, action_name):
 
-    errors = []
+    last_error = None
 
     for endpoint in endpoint_candidates:
         try:
@@ -36,34 +36,15 @@ def _post_to_first_success(endpoint_candidates, payload, action_name):
                 print(f"Phantom {action_name} response:", response)
                 return response
 
-            errors.append({
-                "endpoint": endpoint,
-                "status_code": r.status_code,
-                "body": r.text
-            })
+            last_error = f"{endpoint} returned {r.status_code}: {r.text}"
         except Exception as e:
-            errors.append({
-                "endpoint": endpoint,
-                "error": str(e)
-            })
+            last_error = f"{endpoint} failed: {str(e)}"
 
-    only_not_found = errors and all(
-        isinstance(item.get("status_code"), int) and item.get("status_code") == 404
-        for item in errors
-    )
-
-    if only_not_found:
-        print(f"Phantom {action_name} info: clear endpoint not available on this API version")
-        return {
-            "info": f"No supported endpoint found to {action_name}",
-            "details": errors
-        }
-
-    print(f"Phantom {action_name} warning:", errors)
+    print(f"Phantom {action_name} warning:", last_error)
 
     return {
         "warning": f"Unable to {action_name} on Phantom agent",
-        "details": errors
+        "details": last_error
     }
 
 
@@ -174,9 +155,7 @@ def clear_agent_cache():
     # Cache reset endpoint names may vary by API version.
     endpoints = [
         "/agents/clear-cache",
-        "/agent/clear-cache",
-        "/agents/delete-cache",
-        "/agent/delete-cache"
+        "/agents/delete-cache"
     ]
 
     return _post_to_first_success(endpoints, payload, "clear cache")
