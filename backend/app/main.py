@@ -10,6 +10,8 @@ from app.services.salesnav_builder import build_salesnav_company_search
 
 from app.phantom_service import (
     clear_agent_output,
+    clear_agent_cache,
+    extract_container_id,
     launch_company_search,
     get_container_status,
     fetch_container_results
@@ -84,6 +86,10 @@ def poll_search_and_store(request_id, container_id):
 
         request.phase = "searching"
         request.progress = 25
+
+        # Defensive cleanup in case the job is resumed/restarted.
+        db.query(Company).filter_by(request_id=request_id).delete()
+
         db.commit()
 
         attempts = 0
@@ -234,19 +240,12 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
-    clear_agent_output()
+    clear_output_response = clear_agent_output()
+    clear_cache_response = clear_agent_cache()
 
     response = launch_company_search(search_url)
 
-    container_id = None
-
-    if isinstance(response, dict):
-
-        container_id = (
-        response.get("containerId")
-        or response.get("id")
-        or (response.get("data", {}) or {}).get("containerId")
-        )
+    container_id = extract_container_id(response)
 
     if not container_id:
         request.status = "Failed"
@@ -258,6 +257,8 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
             "search_url": search_url,
             "error": "Phantom launch did not return containerId",
             "phantom_response": response,
+            "clear_output_response": clear_output_response,
+            "clear_cache_response": clear_cache_response,
         }
 
     request.container_id = str(container_id)
