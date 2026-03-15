@@ -26,6 +26,7 @@ def launch_company_search(search_url):
     payload = {
         "id": PHANTOM_AGENT_ID,
         "clearCache": True,
+        "clearOutput": True,
         "argument": {
 
             "inputType": "salesNavigatorSearchUrl",
@@ -70,6 +71,48 @@ def launch_company_search(search_url):
     print("Phantom launch response:", response)
 
     return response
+
+
+# --------------------------------------------------
+# Clear previous Phantom output
+# --------------------------------------------------
+
+def clear_agent_output():
+
+    payload = {"id": PHANTOM_AGENT_ID}
+
+    # Phantombuster endpoints/parameter styles may differ across API versions.
+    attempts = [
+        ("post", "/agents/clear-output", {"json": payload}),
+        ("post", "/agents/delete-output", {"json": payload}),
+        ("post", "/agents/clearOutput", {"json": payload}),
+        ("post", "/agents/clear-output", {"params": payload}),
+        ("post", "/agents/delete-output", {"params": payload}),
+        ("post", "/agents/clearOutput", {"params": payload}),
+    ]
+
+    last_error = None
+
+    for method, endpoint, kwargs in attempts:
+        try:
+            request_fn = getattr(requests, method)
+            r = request_fn(f"{BASE_URL}{endpoint}", headers=HEADERS, timeout=30, **kwargs)
+
+            if 200 <= r.status_code < 300:
+                response = r.json() if r.content else {"ok": True}
+                print("Phantom clear output response:", response)
+                return response
+
+            last_error = f"{method.upper()} {endpoint} returned {r.status_code}: {r.text}"
+        except Exception as e:
+            last_error = f"{method.upper()} {endpoint} failed: {str(e)}"
+
+    print("Phantom clear output warning:", last_error)
+
+    return {
+        "warning": "Unable to clear previous Phantom output",
+        "details": last_error
+    }
 
 
 # --------------------------------------------------
