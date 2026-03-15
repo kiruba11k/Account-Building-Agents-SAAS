@@ -6,9 +6,16 @@ def extract_domain(url):
     if not url:
         return None
 
-    parsed = urlparse(url)
+    text = str(url).strip()
 
-    return parsed.netloc.replace("www.", "")
+    if not text:
+        return None
+
+    parsed = urlparse(text if "://" in text else f"https://{text}")
+
+    domain = (parsed.netloc or parsed.path or "").strip().lower()
+
+    return domain.replace("www.", "") or None
 
 
 def calculate_confidence(company):

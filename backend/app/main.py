@@ -167,10 +167,7 @@ def poll_search_and_store(request_id, container_id):
 
                         request_id=request_id,
 
-                        name=(
-                            item.get("companyName")
-                            or item.get("name")
-                        ),
+                        name=name,
 
                         linkedin_url=linkedin_url,
 
@@ -178,26 +175,13 @@ def poll_search_and_store(request_id, container_id):
 
                         domain=domain,
 
-                        industry=(
-                            item.get("companyIndustry")
-                            or item.get("industry")
-                        ),
+                        industry=industry,
 
-                        headcount=(
-                            item.get("companyHeadcount")
-                            or item.get("employeesCount")
-                            or item.get("employeeCountRange")
-                        ),
+                        headcount=headcount,
 
-                        revenue=(
-                            item.get("companyRevenue")
-                            or item.get("revenue")
-                        ),
+                        revenue=revenue,
 
-                        headquarters=(
-                            item.get("companyLocation")
-                            or item.get("location")
-                        ),
+                        headquarters=headquarters,
 
                         confidence_score=confidence
                     )
