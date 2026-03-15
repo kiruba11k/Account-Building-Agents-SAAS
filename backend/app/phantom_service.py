@@ -229,28 +229,40 @@ def fetch_container_results(container_id):
         if not text:
             return []
 
-        try:
-            parsed = json.loads(text)
+        def _parse_as_json_or_table(content_text):
+            try:
+                parsed = json.loads(content_text)
 
-            if isinstance(parsed, list):
-                return parsed
+                if isinstance(parsed, list):
+                    return parsed
 
-            if isinstance(parsed, dict):
-                for nested_key in ["data", "results", "items", "rows"]:
-                    nested = parsed.get(nested_key)
+                if isinstance(parsed, dict):
+                    for nested_key in ["data", "results", "items", "rows"]:
+                        nested = parsed.get(nested_key)
 
-                    if isinstance(nested, list):
-                        return nested
-        except Exception:
-            pass
+                        if isinstance(nested, list):
+                            return nested
+            except Exception:
+                pass
 
-        delimiter = "\t" if "\t" in text else ","
+            delimiter = "\t" if "\t" in content_text else ","
 
-        try:
-            rows = list(csv.DictReader(StringIO(text), delimiter=delimiter))
-            return [row for row in rows if any(row.values())]
-        except Exception:
-            return []
+            try:
+                rows = list(csv.DictReader(StringIO(content_text), delimiter=delimiter))
+                return [row for row in rows if any(row.values())]
+            except Exception:
+                return []
+
+        # Some Phantom responses expose an output URL instead of inline CSV/JSON.
+        if text.startswith("http://") or text.startswith("https://"):
+            try:
+                fetched = requests.get(text, timeout=30)
+                fetched.raise_for_status()
+                return _parse_as_json_or_table(fetched.text)
+            except Exception:
+                return []
+
+        return _parse_as_json_or_table(text)
 
     def _extract_rows(payload):
 
@@ -278,7 +290,7 @@ def fetch_container_results(container_id):
                 if nested_rows:
                     return nested_rows
 
-        for key in ["output", "resultObject", "result", "csv", "json"]:
+        for key in ["output", "outputUrl", "resultObject", "result", "csv", "json", "fileUrl", "downloadUrl"]:
             candidate = payload.get(key)
 
             if isinstance(candidate, str):

@@ -69,6 +69,14 @@ def get_db():
         db.close()
 
 
+def _model_to_dict(model):
+
+    return {
+        column.name: getattr(model, column.name)
+        for column in model.__table__.columns
+    }
+
+
 # -------------------------------------------------
 # Poll Phantom and store results
 # -------------------------------------------------
@@ -113,24 +121,47 @@ def poll_search_and_store(request_id, container_id):
                 request.progress = 70
                 db.commit()
 
+                seen_fingerprints = set()
+
                 for item in results:
+
+                    linkedin_url = (
+                        item.get("companyLinkedinUrl")
+                        or item.get("companyUrl")
+                        or item.get("regularCompanyUrl")
+                        or item.get("linkedInCompanyUrl")
+                        or item.get("linkedinUrl")
+                    )
 
                     website = (
                         item.get("companyWebsite")
                         or item.get("website")
+                        or item.get("companyDomain")
                     )
 
                     domain = extract_domain(website)
 
-                    confidence = calculate_confidence(item)
+                    normalized_linkedin = (linkedin_url or "").strip().lower()
+                    normalized_domain = (domain or "").strip().lower()
+                    normalized_name = (
+                        item.get("companyName")
+                        or item.get("name")
+                        or ""
+                    ).strip().lower()
 
-                    existing = db.query(Company).filter_by(
-                        request_id=request_id,
-                        domain=domain
-                    ).first()
+                    fingerprint = None
 
-                    if existing:
+                    if normalized_linkedin:
+                        fingerprint = f"linkedin:{normalized_linkedin}"
+                    elif normalized_domain and normalized_domain != "linkedin.com":
+                        fingerprint = f"domain:{normalized_domain}"
+                    elif normalized_name:
+                        fingerprint = f"name:{normalized_name}"
+
+                    if fingerprint and fingerprint in seen_fingerprints:
                         continue
+
+                    confidence = calculate_confidence(item)
 
                     company = Company(
 
@@ -141,13 +172,7 @@ def poll_search_and_store(request_id, container_id):
                             or item.get("name")
                         ),
 
-                        linkedin_url=(
-                            item.get("companyLinkedinUrl")
-                            or item.get("companyUrl")
-                            or item.get("regularCompanyUrl")
-                            or item.get("linkedInCompanyUrl")
-                            or item.get("linkedinUrl")
-                        ),
+                        linkedin_url=linkedin_url,
 
                         website=website,
 
@@ -178,6 +203,9 @@ def poll_search_and_store(request_id, container_id):
                     )
 
                     db.add(company)
+
+                    if fingerprint:
+                        seen_fingerprints.add(fingerprint)
 
                 db.commit()
 
@@ -312,7 +340,7 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
 
     query = db.query(Company).filter_by(request_id=request_id)
 
-    results = query.offset(offset).limit(limit).all()
+    rows = query.offset(offset).limit(limit).all()
 
     total = query.count()
 
@@ -320,7 +348,7 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
         "total": total,
         "page": page,
         "limit": limit,
-        "results": results
+        "results": [_model_to_dict(row) for row in rows]
     }
 
 
@@ -330,7 +358,8 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
 
 @app.get("/api/requests")
 def get_requests(db: Session = Depends(get_db)):
-    return db.query(LeadRequest).all()
+    rows = db.query(LeadRequest).all()
+    return [_model_to_dict(row) for row in rows]
 
 
 # -------------------------------------------------
@@ -338,23 +367,24 @@ def get_requests(db: Session = Depends(get_db)):
 # -------------------------------------------------
 
 @app.get("/api/download/{request_id}")
-def download_csv(request_id: int, db: Session = Depends(get_db)):
+def download_csv(request_id: int, format: str = "csv", db: Session = Depends(get_db)):
 
     companies = db.query(Company).filter_by(request_id=request_id).all()
 
-    data = [{
-        "Company": c.name,
-        "Domain": c.domain,
-        "Industry": c.industry,
-        "Employees": c.headcount,
-        "Revenue": c.revenue,
-        "Location": c.headquarters,
-        "Website": c.website,
-        "LinkedIn": c.linkedin_url,
-        "Confidence": c.confidence_score
-    } for c in companies]
+    data = [_model_to_dict(c) for c in companies]
 
     df = pd.DataFrame(data)
+
+    output_format = (format or "csv").strip().lower()
+
+    if output_format == "xlsx":
+        file_path = f"/tmp/request_{request_id}.xlsx"
+        df.to_excel(file_path, index=False)
+        return FileResponse(
+            file_path,
+            filename=f"salesnav_{request_id}.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     file_path = f"/tmp/request_{request_id}.csv"
 
