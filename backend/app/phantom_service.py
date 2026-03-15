@@ -140,7 +140,9 @@ def clear_agent_output():
     # Try known variants so a stale output object does not leak into new launches.
     endpoints = [
         "/agents/clear-output",
-        "/agents/delete-output"
+        "/agent/clear-output",
+        "/agents/delete-output",
+        "/agent/delete-output"
     ]
 
     return _post_to_first_success(endpoints, payload, "clear output")
