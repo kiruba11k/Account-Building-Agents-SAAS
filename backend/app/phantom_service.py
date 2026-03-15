@@ -1,5 +1,8 @@
 import os
 import re
+import json
+import csv
+from io import StringIO
 import requests
 
 # --------------------------------------------------
@@ -216,15 +219,80 @@ def fetch_container_results(container_id):
 
     output = fetch_container_output(container_id)
 
-    if isinstance(output, dict):
+    def _from_tabular_string(raw_value):
 
-        if isinstance(output.get("data"), list):
-            return output["data"]
+        if not isinstance(raw_value, str):
+            return []
 
-        if isinstance(output.get("results"), list):
-            return output["results"]
+        text = raw_value.strip()
 
-        if isinstance(output.get("items"), list):
-            return output["items"]
+        if not text:
+            return []
 
-    return []
+        try:
+            parsed = json.loads(text)
+
+            if isinstance(parsed, list):
+                return parsed
+
+            if isinstance(parsed, dict):
+                for nested_key in ["data", "results", "items", "rows"]:
+                    nested = parsed.get(nested_key)
+
+                    if isinstance(nested, list):
+                        return nested
+        except Exception:
+            pass
+
+        delimiter = "\t" if "\t" in text else ","
+
+        try:
+            rows = list(csv.DictReader(StringIO(text), delimiter=delimiter))
+            return [row for row in rows if any(row.values())]
+        except Exception:
+            return []
+
+    def _extract_rows(payload):
+
+        if isinstance(payload, list):
+            return payload
+
+        if not isinstance(payload, dict):
+            return []
+
+        for key in ["data", "results", "items", "rows"]:
+            candidate = payload.get(key)
+
+            if isinstance(candidate, list):
+                return candidate
+
+            if isinstance(candidate, str):
+                parsed_rows = _from_tabular_string(candidate)
+
+                if parsed_rows:
+                    return parsed_rows
+
+            if isinstance(candidate, dict):
+                nested_rows = _extract_rows(candidate)
+
+                if nested_rows:
+                    return nested_rows
+
+        for key in ["output", "resultObject", "result", "csv", "json"]:
+            candidate = payload.get(key)
+
+            if isinstance(candidate, str):
+                parsed_rows = _from_tabular_string(candidate)
+
+                if parsed_rows:
+                    return parsed_rows
+
+            if isinstance(candidate, dict):
+                nested_rows = _extract_rows(candidate)
+
+                if nested_rows:
+                    return nested_rows
+
+        return []
+
+    return _extract_rows(output)

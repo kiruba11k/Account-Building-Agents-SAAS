@@ -143,6 +143,8 @@ def poll_search_and_store(request_id, container_id):
 
                         linkedin_url=(
                             item.get("companyLinkedinUrl")
+                            or item.get("companyUrl")
+                            or item.get("regularCompanyUrl")
                             or item.get("linkedInCompanyUrl")
                             or item.get("linkedinUrl")
                         ),
@@ -158,6 +160,7 @@ def poll_search_and_store(request_id, container_id):
 
                         headcount=(
                             item.get("companyHeadcount")
+                            or item.get("employeesCount")
                             or item.get("employeeCountRange")
                         ),
 
