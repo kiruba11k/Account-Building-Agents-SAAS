@@ -14,7 +14,7 @@ export default function Sidebar() {
     <aside className="glass-panel neon-ring relative z-10 m-4 hidden w-72 rounded-3xl p-6 md:block">
       <div className="mb-10">
         <p className="text-xs uppercase tracking-[0.35em] text-cyan-200/80">LeadForge</p>
-        <h1 className="float-soft mt-2 text-3xl font-extrabold leading-tight text-white">Growth Console</h1>
+        <h1 className="float-soft mt-2 text-3xl font-black leading-tight text-white">Growth Console</h1>
       </div>
 
       <nav className="space-y-3">
@@ -31,8 +31,8 @@ export default function Sidebar() {
                   : "border-white/10 bg-white/5 text-slate-200 hover:border-cyan-100/40 hover:bg-white/15"
               }`}
             >
-              <span className="material-symbols-rounded text-[20px] leading-none">{item.icon}</span>
-              <span className="font-medium tracking-wide">{item.label}</span>
+              <span className="text-lg">{item.icon}</span>
+              <span className="font-medium">{item.label}</span>
             </Link>
           );
         })}
