@@ -4,10 +4,10 @@ export default function Sidebar() {
   const location = useLocation();
 
   const menu = [
-    { path: "/", label: "Sales Navigator", icon: "travel_explore" },
-    { path: "/google", label: "Google Agent", icon: "smart_toy" },
-    { path: "/enrichment", label: "Enrichment", icon: "auto_awesome" },
-    { path: "/requests", label: "Requests", icon: "folder_open" },
+    { path: "/", label: "Sales Navigator"},
+    { path: "/google", label: "Google Agent" },
+    { path: "/enrichment", label: "Enrichment" },
+    { path: "/requests", label: "Requests"},
   ];
 
   return (
