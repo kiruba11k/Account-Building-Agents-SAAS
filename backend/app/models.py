@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from .database import Base
 
 
@@ -20,8 +21,6 @@ class Company(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     request_id = Column(Integer, index=True)
-
-    # optional normalized fields for app usage
     name = Column(String)
     domain = Column(String)
     website = Column(String)
@@ -31,6 +30,4 @@ class Company(Base):
     headquarters = Column(String)
     linkedin_url = Column(String)
     confidence_score = Column(String)
-
-    # source of truth
-    raw_data = Column(JSON)
+    raw_data = Column(JSONB)
