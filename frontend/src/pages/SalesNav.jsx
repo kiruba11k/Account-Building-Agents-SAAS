@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import MultiValueInput from "../components/MultiValueInput";
 import API from "../api";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { getActiveSalesNavRequests, rememberSalesNavRequest } from "../utils/sessionMemory";
 
 export default function SalesNav() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [activeRequest, setActiveRequest] = useState(null);
 
   const [countries, setCountries] = useState([]);
   const [industriesInclude, setIndustriesInclude] = useState([]);
@@ -37,6 +39,14 @@ export default function SalesNav() {
     });
   };
 
+
+  useEffect(() => {
+    const active = getActiveSalesNavRequests();
+    if (active.length > 0) {
+      setActiveRequest(active[0]);
+    }
+  }, []);
+
   const launchAgent = async () => {
     setLoading(true);
 
@@ -51,6 +61,8 @@ export default function SalesNav() {
 
     try {
       const res = await API.post("/api/run-salesnav", payload);
+      rememberSalesNavRequest(res.data.request_id);
+      setActiveRequest({ request_id: String(res.data.request_id), status: "Running" });
       navigate(`/results/${res.data.request_id}`);
     } catch {
       alert("Agent launch failed");
@@ -154,6 +166,21 @@ export default function SalesNav() {
         <div className="mt-6 rounded-2xl border border-indigo-200/20 bg-indigo-300/10 p-4 text-sm text-indigo-100">
           Estimated results will depend on your filters.
         </div>
+
+        {activeRequest && (
+          <div className="mt-4 rounded-2xl border border-cyan-200/30 bg-cyan-300/10 p-4 text-sm text-cyan-100">
+            <p className="font-semibold">Continue active run</p>
+            <p className="mt-1">
+              Request #{activeRequest.request_id} is still running in the background.
+            </p>
+            <Link
+              to={`/results/${activeRequest.request_id}`}
+              className="mt-2 inline-block text-cyan-200 underline underline-offset-4"
+            >
+              Open live results
+            </Link>
+          </div>
+        )}
 
         <button
           onClick={launchAgent}

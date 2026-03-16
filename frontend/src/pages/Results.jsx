@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import api from "../api";
+import { markSalesNavRequestFinal } from "../utils/sessionMemory";
 
 export default function Results() {
 
@@ -25,6 +26,10 @@ export default function Results() {
     const res = await api.get(`/api/request/${id}`);
 
     setStatus(res.data);
+
+    if (["Completed", "Failed", "Timeout"].includes(res.data?.status)) {
+      markSalesNavRequestFinal(id, res.data.status);
+    }
 
   };
 
