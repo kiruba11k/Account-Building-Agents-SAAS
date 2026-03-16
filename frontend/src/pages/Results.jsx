@@ -103,11 +103,11 @@ export default function Results() {
 
             <tr key={i}>
 
-              <td>{r.name}</td>
-              <td>{r.domain}</td>
-              <td>{r.industry}</td>
-              <td>{r.headcount}</td>
-              <td>{r.revenue}</td>
+              <td>{r.company_name || r.name || "-"}</td>
+              <td>{r.company_url || r.domain || "-"}</td>
+              <td>{r.industry || "-"}</td>
+              <td>{r.employees_count || r.headcount || "-"}</td>
+              <td>{r.revenue || "-"}</td>
 
             </tr>
 
