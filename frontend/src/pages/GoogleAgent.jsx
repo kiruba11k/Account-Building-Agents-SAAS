@@ -107,7 +107,7 @@ export default function GoogleAgent() {
       <div className="glass-panel card-hover rounded-3xl p-8">
         <h3 className="text-2xl font-bold text-white">Google Discovery Agent</h3>
         <p className="mt-4 text-slate-200/90 leading-7">
-          Uses Apify <b className="text-cyan-200">compass/crawler-google-places</b> with the synchronous
+          <b className="text-cyan-200">crawler-google-places</b> with the synchronous
           dataset endpoint for GTM enrichment-friendly output.
         </p>
 
