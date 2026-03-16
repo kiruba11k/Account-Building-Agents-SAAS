@@ -1,16 +1,18 @@
+import os
 import json
 import time
 import threading
-import pandas as pd
+import tempfile
+from typing import Any, Dict, List
 
-from fastapi import FastAPI, Depends, BackgroundTasks
+import pandas as pd
+from fastapi import FastAPI, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal
 from .models import LeadRequest, Company
-
 from app.services.company_utils import extract_domain, calculate_confidence
 from app.services.salesnav_builder import build_salesnav_company_search
 from app.phantom_service import (
@@ -19,13 +21,12 @@ from app.phantom_service import (
     extract_container_id,
     launch_company_search,
     get_container_status,
-    fetch_container_output,
-    fetch_container_results
+    fetch_container_results,
 )
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
+app = FastAPI(title="Account Building Agents SaaS Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,22 +37,9 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def resume_pending_jobs():
-    db = SessionLocal()
-    try:
-        pending = db.query(LeadRequest).filter(LeadRequest.status == "Running").all()
-
-        for job in pending:
-            print("Resuming job:", job.id)
-            threading.Thread(
-                target=poll_search_and_store,
-                args=(job.id, job.container_id),
-                daemon=True
-            ).start()
-    finally:
-        db.close()
-
+# -------------------------------------------------
+# DB dependency
+# -------------------------------------------------
 
 def get_db():
     db = SessionLocal()
@@ -61,146 +49,311 @@ def get_db():
         db.close()
 
 
-def _model_to_dict(model):
-    return {
-        column.name: getattr(model, column.name)
-        for column in model.__table__.columns
-    }
+# -------------------------------------------------
+# Startup resume
+# -------------------------------------------------
+
+@app.on_event("startup")
+def resume_pending_jobs():
+    db = SessionLocal()
+    try:
+        pending = db.query(LeadRequest).filter(LeadRequest.status == "Running").all()
+
+        for job in pending:
+            if not job.container_id:
+                job.status = "Failed"
+                job.phase = "failed"
+                job.progress = 100
+                db.commit()
+                continue
+
+            print(f"[Startup] Resuming request_id={job.id}, container_id={job.container_id}")
+
+            threading.Thread(
+                target=poll_search_and_store,
+                args=(job.id, str(job.container_id)),
+                daemon=True,
+            ).start()
+    finally:
+        db.close()
 
 
-def _pick_first(item, keys):
+# -------------------------------------------------
+# Helpers
+# -------------------------------------------------
+
+SYSTEM_FIELDS = {
+    "id",
+    "request_id",
+    "name",
+    "domain",
+    "website",
+    "industry",
+    "headcount",
+    "revenue",
+    "headquarters",
+    "linkedin_url",
+    "confidence_score",
+}
+
+
+def _safe_jsonable(value: Any) -> Any:
+    try:
+        json.dumps(value)
+        return value
+    except Exception:
+        return str(value)
+
+
+def _model_to_dict(model) -> Dict[str, Any]:
+    data = {}
+    for column in model.__table__.columns:
+        data[column.name] = getattr(model, column.name)
+    return data
+
+
+def _clean_value(value: Any) -> Any:
+    if isinstance(value, str):
+        v = value.strip()
+        return v if v != "" else None
+    return value
+
+
+def _is_noise_row(item: Dict[str, Any]) -> bool:
+    """
+    Filters Phantom / runtime logs such as AWS SDK warnings, info lines, etc.
+    """
+    if not isinstance(item, dict) or not item:
+        return True
+
+    values = []
+    for v in item.values():
+        if isinstance(v, list):
+            values.extend([str(x) for x in v if x is not None])
+        elif v is not None:
+            values.append(str(v))
+
+    blob = " | ".join(values).strip().lower()
+
+    if not blob:
+        return True
+
+    noise_markers = [
+        "aws sdk for javascript",
+        "maintenance mode",
+        "end-of-support",
+        "trace-warnings",
+        "process finished successfully",
+        "number of results to scrape",
+        "this search has already been processed",
+        "[info_]",
+        "warning",
+        "exit code",
+    ]
+
+    return any(marker in blob for marker in noise_markers)
+
+
+def _pick_first(item: Dict[str, Any], keys: List[str]) -> Any:
     for key in keys:
         if key in item:
-            value = item.get(key)
-            if value is not None and str(value).strip() != "":
+            value = _clean_value(item.get(key))
+            if value is not None:
                 return value
     return None
 
 
-def _extract_company_fields(item: dict):
-    linkedin_url = _pick_first(item, [
-        "regularCompanyUrl",
-        "companyUrl",
-        "companyLinkedinUrl",
-        "linkedInCompanyUrl",
-        "linkedinUrl",
-        "linkedin_url"
-    ])
+def _normalize_company_row(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map known semantic fields if present, but do not depend on hardcoded
+    export columns from Phantom. Raw row is preserved separately.
+    """
+    linkedin_url = _pick_first(
+        item,
+        [
+            "companyLinkedinUrl",
+            "companyUrl",
+            "regularCompanyUrl",
+            "linkedInCompanyUrl",
+            "linkedinUrl",
+        ],
+    )
 
-    website = _pick_first(item, [
-        "website",
-        "companyWebsite",
-        "companyDomain",
-        "domain"
-    ])
+    website = _pick_first(
+        item,
+        [
+            "companyWebsite",
+            "website",
+            "companyDomain",
+            "domain",
+        ],
+    )
 
-    name = _pick_first(item, [
-        "companyName",
-        "name"
-    ])
+    name = _pick_first(
+        item,
+        [
+            "companyName",
+            "name",
+        ],
+    )
 
-    industry = _pick_first(item, [
-        "industry",
-        "companyIndustry"
-    ])
+    industry = _pick_first(
+        item,
+        [
+            "industry",
+            "companyIndustry",
+        ],
+    )
 
-    headcount = _pick_first(item, [
-        "employeesCount",
-        "employeeCount",
-        "employeeCountRange",
-        "headcount",
-        "companySize",
-        "employees"
-    ])
+    headcount = _pick_first(
+        item,
+        [
+            "employeesCount",
+            "employeeCount",
+            "employeeCountRange",
+            "headcount",
+            "companySize",
+        ],
+    )
 
-    revenue = _pick_first(item, [
-        "revenue",
-        "companyRevenue"
-    ])
+    revenue = _pick_first(
+        item,
+        [
+            "revenue",
+            "annualRevenue",
+            "companyRevenue",
+        ],
+    )
 
-    headquarters = _pick_first(item, [
-        "headquarters",
-        "location",
-        "companyLocation",
-        "companyHeadquarters"
-    ])
+    headquarters = _pick_first(
+        item,
+        [
+            "headquarters",
+            "companyHeadquarters",
+            "location",
+        ],
+    )
+
+    domain = extract_domain(website or linkedin_url)
 
     return {
+        "name": name,
         "linkedin_url": linkedin_url,
         "website": website,
-        "name": name,
+        "domain": domain,
         "industry": industry,
         "headcount": headcount,
         "revenue": revenue,
         "headquarters": headquarters,
+        "raw_data": {k: _safe_jsonable(v) for k, v in item.items()},
     }
 
 
-def _looks_like_real_company(item: dict) -> bool:
-    if not isinstance(item, dict) or not item:
-        return False
+def _build_export_rows(companies: List[Company]) -> List[Dict[str, Any]]:
+    """
+    Dynamic export:
+    - include fixed system columns
+    - include all keys from raw_data dynamically
+    - do not hardcode phantom columns
+    """
+    all_raw_keys = set()
 
-    if item.get("companyName") and (item.get("companyUrl") or item.get("regularCompanyUrl")):
-        return True
+    parsed_rows = []
+    for c in companies:
+        base = _model_to_dict(c)
+        raw_data = base.get("raw_data") or {}
 
-    keys_lower = {str(k).strip().lower() for k in item.keys() if k is not None}
+        if isinstance(raw_data, str):
+            try:
+                raw_data = json.loads(raw_data)
+            except Exception:
+                raw_data = {"raw_data": raw_data}
 
-    expected = {
-        "companyurl",
-        "companyname",
-        "description",
-        "companyid",
-        "regularcompanyurl",
-        "industry",
-        "employeescount",
-        "employeecountrange",
-        "logourl",
-        "ishiring",
-        "query",
-        "timestamp",
-        "searchaccountprofileid",
-        "searchaccountprofilename",
-    }
+        if not isinstance(raw_data, dict):
+            raw_data = {"raw_data": str(raw_data)}
 
-    return len(keys_lower.intersection(expected)) >= 2
+        all_raw_keys.update(raw_data.keys())
+        parsed_rows.append((base, raw_data))
+
+    ordered_raw_keys = sorted(all_raw_keys)
+
+    rows = []
+    for base, raw_data in parsed_rows:
+        row = {}
+
+        # system columns first
+        for key in [
+            "id",
+            "request_id",
+            "name",
+            "domain",
+            "website",
+            "industry",
+            "headcount",
+            "revenue",
+            "headquarters",
+            "linkedin_url",
+            "confidence_score",
+        ]:
+            if key in base:
+                row[key] = base.get(key)
+
+        # dynamic phantom/raw columns next
+        for raw_key in ordered_raw_keys:
+            if raw_key not in row:
+                row[raw_key] = raw_data.get(raw_key)
+
+        rows.append(row)
+
+    return rows
 
 
-def poll_search_and_store(request_id, container_id):
+# -------------------------------------------------
+# Poll Phantom and store results
+# -------------------------------------------------
+
+def poll_search_and_store(request_id: int, container_id: str):
     db = SessionLocal()
 
     try:
         request = db.query(LeadRequest).filter_by(id=request_id).first()
         if not request:
-            print("Request not found:", request_id)
+            print(f"[Poll] Request not found: {request_id}")
             return
 
         request.phase = "searching"
         request.progress = 25
+        db.commit()
 
+        # remove previous rows for this request before storing fresh results
         db.query(Company).filter_by(request_id=request_id).delete()
         db.commit()
 
         attempts = 0
+        max_attempts = 80
 
-        while attempts < 80:
+        while attempts < max_attempts:
             try:
                 status_response = get_container_status(container_id)
-                status = status_response.get("status")
+                status = str(status_response.get("status", "")).strip().lower()
+                print(f"[Poll] container_id={container_id}, status={status}")
             except Exception as e:
-                print("Phantom status error:", e)
-                time.sleep(30)
+                print(f"[Poll] Phantom status error: {e}")
                 attempts += 1
+                time.sleep(30)
                 continue
 
             if status == "finished":
                 try:
                     results = fetch_container_results(container_id)
-                    print("Fetched results type:", type(results))
-                    print("Fetched results count:", len(results) if isinstance(results, list) else "not-list")
-                    print("Fetched results sample:", results[:2] if isinstance(results, list) else results)
+                    print(f"[Poll] fetched rows = {len(results)}")
                 except Exception as e:
-                    print("Fetch results error:", e)
-                    results = []
+                    print(f"[Poll] fetch_container_results error: {e}")
+                    request.status = "Failed"
+                    request.phase = "failed"
+                    request.progress = 100
+                    db.commit()
+                    return
 
                 request.phase = "processing"
                 request.progress = 70
@@ -213,28 +366,14 @@ def poll_search_and_store(request_id, container_id):
                     if not isinstance(item, dict):
                         continue
 
-                    if not item:
+                    if _is_noise_row(item):
                         continue
 
-                    if not _looks_like_real_company(item):
-                        continue
+                    normalized = _normalize_company_row(item)
 
-                    extracted = _extract_company_fields(item)
-
-                    linkedin_url = extracted["linkedin_url"]
-                    website = extracted["website"]
-                    name = extracted["name"]
-                    industry = extracted["industry"]
-                    headcount = extracted["headcount"]
-                    revenue = extracted["revenue"]
-                    headquarters = extracted["headquarters"]
-
-                    domain = extract_domain(website)
-                    confidence = calculate_confidence(item)
-
-                    normalized_linkedin = (linkedin_url or "").strip().lower()
-                    normalized_domain = (domain or "").strip().lower()
-                    normalized_name = (name or "").strip().lower()
+                    normalized_linkedin = (normalized.get("linkedin_url") or "").strip().lower()
+                    normalized_domain = (normalized.get("domain") or "").strip().lower()
+                    normalized_name = (normalized.get("name") or "").strip().lower()
 
                     fingerprint = None
                     if normalized_linkedin:
@@ -247,28 +386,30 @@ def poll_search_and_store(request_id, container_id):
                     if fingerprint and fingerprint in seen_fingerprints:
                         continue
 
+                    confidence = str(calculate_confidence(item))
+
                     company = Company(
                         request_id=request_id,
-                        name=name,
-                        linkedin_url=linkedin_url,
-                        website=website,
-                        domain=domain,
-                        industry=industry,
-                        headcount=str(headcount) if headcount is not None else None,
-                        revenue=str(revenue) if revenue is not None else None,
-                        headquarters=headquarters,
-                        confidence_score=str(confidence) if confidence is not None else None,
-                        raw_data=item
+                        name=normalized.get("name"),
+                        domain=normalized.get("domain"),
+                        website=normalized.get("website"),
+                        industry=normalized.get("industry"),
+                        headcount=normalized.get("headcount"),
+                        revenue=normalized.get("revenue"),
+                        headquarters=normalized.get("headquarters"),
+                        linkedin_url=normalized.get("linkedin_url"),
+                        confidence_score=confidence,
+                        raw_data=normalized.get("raw_data"),
                     )
 
                     db.add(company)
-                    inserted += 1
 
                     if fingerprint:
                         seen_fingerprints.add(fingerprint)
 
+                    inserted += 1
+
                 db.commit()
-                print("Inserted companies:", inserted)
 
                 request.total_results = db.query(Company).filter_by(request_id=request_id).count()
 
@@ -281,17 +422,19 @@ def poll_search_and_store(request_id, container_id):
 
                 request.progress = 100
                 db.commit()
+
+                print(f"[Poll] request_id={request_id} completed, inserted={inserted}")
                 return
 
-            if status == "error":
+            if status in {"error", "failed", "aborted"}:
                 request.status = "Failed"
                 request.phase = "failed"
                 request.progress = 100
                 db.commit()
                 return
 
-            time.sleep(30)
             attempts += 1
+            time.sleep(30)
 
         request.status = "Timeout"
         request.phase = "failed"
@@ -299,7 +442,7 @@ def poll_search_and_store(request_id, container_id):
         db.commit()
 
     except Exception as e:
-        print("poll_search_and_store fatal error:", e)
+        print(f"[Poll] fatal error: {e}")
         try:
             request = db.query(LeadRequest).filter_by(id=request_id).first()
             if request:
@@ -307,22 +450,29 @@ def poll_search_and_store(request_id, container_id):
                 request.phase = "failed"
                 request.progress = 100
                 db.commit()
-        except Exception as inner_e:
-            print("Failed to update request status:", inner_e)
-
+        except Exception:
+            pass
     finally:
         db.close()
 
 
+# -------------------------------------------------
+# Run SalesNav
+# -------------------------------------------------
+
 @app.post("/api/run-salesnav")
-def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def run_salesnav(
+    data: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     request = LeadRequest(
         request_name=data.get("request_name"),
         status="Launching",
         phase="searching",
         progress=10,
         total_results=0,
-        filters=data
+        filters=data,
     )
 
     db.add(request)
@@ -337,8 +487,10 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
 
     print(f"[SalesNav] Generated URL: {search_url}")
 
+    # optional, not relied upon
     clear_output_response = clear_agent_output()
     clear_cache_response = clear_agent_cache()
+
     response = launch_company_search(search_url)
     container_id = extract_container_id(response)
 
@@ -347,14 +499,13 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
         request.phase = "failed"
         request.progress = 100
         db.commit()
-
         return {
             "request_id": request.id,
             "search_url": search_url,
             "error": "Phantom launch did not return containerId",
             "phantom_response": response,
             "clear_output_response": clear_output_response,
-            "clear_cache_response": clear_cache_response
+            "clear_cache_response": clear_cache_response,
         }
 
     request.container_id = str(container_id)
@@ -364,7 +515,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     background_tasks.add_task(
         poll_search_and_store,
         request.id,
-        str(container_id)
+        str(container_id),
     )
 
     return {
@@ -372,9 +523,13 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
         "search_url": search_url,
         "container_id": str(container_id),
         "clear_output_response": clear_output_response,
-        "clear_cache_response": clear_cache_response
+        "clear_cache_response": clear_cache_response,
     }
 
+
+# -------------------------------------------------
+# Request status
+# -------------------------------------------------
 
 @app.get("/api/request/{request_id}")
 def get_request_status(request_id: int, db: Session = Depends(get_db)):
@@ -384,37 +539,45 @@ def get_request_status(request_id: int, db: Session = Depends(get_db)):
         return {"error": "request not found"}
 
     return {
-        "id": request.id,
+        "request_id": request.id,
+        "request_name": request.request_name,
         "status": request.status,
         "phase": request.phase,
         "progress": request.progress,
         "total_results": request.total_results,
-        "container_id": request.container_id
+        "container_id": request.container_id,
+        "filters": request.filters,
     }
 
 
-@app.get("/api/results/{request_id}")
-def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = Depends(get_db)):
-    offset = (page - 1) * limit
-    query = db.query(Company).filter_by(request_id=request_id)
+# -------------------------------------------------
+# Paginated results
+# -------------------------------------------------
 
+@app.get("/api/results/{request_id}")
+def get_results(
+    request_id: int,
+    page: int = 1,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    offset = (page - 1) * limit
+
+    query = db.query(Company).filter_by(request_id=request_id)
     rows = query.offset(offset).limit(limit).all()
     total = query.count()
-
-    results = []
-    for row in rows:
-        item = _model_to_dict(row)
-        if row.raw_data:
-            item["raw_data"] = row.raw_data
-        results.append(item)
 
     return {
         "total": total,
         "page": page,
         "limit": limit,
-        "results": results
+        "results": [_model_to_dict(row) for row in rows],
     }
 
+
+# -------------------------------------------------
+# All requests
+# -------------------------------------------------
 
 @app.get("/api/requests")
 def get_requests(db: Session = Depends(get_db)):
@@ -422,113 +585,56 @@ def get_requests(db: Session = Depends(get_db)):
     return [_model_to_dict(row) for row in rows]
 
 
+# -------------------------------------------------
+# Download
+# format = csv | xlsx | json
+# -------------------------------------------------
+
 @app.get("/api/download/{request_id}")
-def download_file(request_id: int, format: str = "csv", db: Session = Depends(get_db)):
+def download_file(
+    request_id: int,
+    format: str = Query("csv"),
+    db: Session = Depends(get_db),
+):
     companies = db.query(Company).filter_by(request_id=request_id).all()
 
     if not companies:
         return JSONResponse(
             status_code=404,
-            content={
-                "error": "No results found for this request_id",
-                "request_id": request_id
-            }
+            content={"error": "No results found for this request_id"},
         )
 
+    rows = _build_export_rows(companies)
     output_format = (format or "csv").strip().lower()
 
-    export_rows = []
-    for c in companies:
-        if c.raw_data and isinstance(c.raw_data, dict):
-            export_rows.append(dict(c.raw_data))
-        else:
-            export_rows.append({
-                "id": c.id,
-                "request_id": c.request_id,
-                "name": c.name,
-                "domain": c.domain,
-                "website": c.website,
-                "industry": c.industry,
-                "headcount": c.headcount,
-                "revenue": c.revenue,
-                "headquarters": c.headquarters,
-                "linkedin_url": c.linkedin_url,
-                "confidence_score": c.confidence_score
-            })
-
     if output_format == "json":
-        file_path = f"/tmp/request_{request_id}.json"
+        file_path = os.path.join(tempfile.gettempdir(), f"salesnav_{request_id}.json")
         with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(export_rows, f, ensure_ascii=False, indent=2)
+            json.dump(rows, f, ensure_ascii=False, indent=2)
 
         return FileResponse(
             file_path,
             filename=f"salesnav_{request_id}.json",
-            media_type="application/json"
+            media_type="application/json",
         )
 
-    df = pd.json_normalize(export_rows)
+    df = pd.DataFrame(rows)
 
     if output_format == "xlsx":
-        file_path = f"/tmp/request_{request_id}.xlsx"
+        file_path = os.path.join(tempfile.gettempdir(), f"salesnav_{request_id}.xlsx")
         df.to_excel(file_path, index=False)
+
         return FileResponse(
             file_path,
             filename=f"salesnav_{request_id}.xlsx",
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    file_path = f"/tmp/request_{request_id}.csv"
+    file_path = os.path.join(tempfile.gettempdir(), f"salesnav_{request_id}.csv")
     df.to_csv(file_path, index=False)
 
     return FileResponse(
         file_path,
         filename=f"salesnav_{request_id}.csv",
-        media_type="text/csv"
+        media_type="text/csv",
     )
-
-
-@app.get("/api/debug/container/{container_id}")
-def debug_container(container_id: str):
-    status = get_container_status(container_id)
-    output = fetch_container_output(container_id)
-    results = fetch_container_results(container_id)
-
-    return {
-        "status_response": status,
-        "output_response": output,
-        "parsed_result_count": len(results) if isinstance(results, list) else None,
-        "parsed_sample": results[:2] if isinstance(results, list) else results,
-    }
-
-
-@app.get("/api/debug/request/{request_id}")
-def debug_request(request_id: int, db: Session = Depends(get_db)):
-    request = db.query(LeadRequest).filter_by(id=request_id).first()
-
-    if not request:
-        return {"error": "request not found"}
-
-    if not request.container_id:
-        return {
-            "request_id": request.id,
-            "status": request.status,
-            "error": "missing container_id"
-        }
-
-    status = get_container_status(request.container_id)
-    output = fetch_container_output(request.container_id)
-    results = fetch_container_results(request.container_id)
-    companies = db.query(Company).filter_by(request_id=request_id).count()
-
-    return {
-        "request_id": request.id,
-        "request_status": request.status,
-        "phase": request.phase,
-        "container_id": request.container_id,
-        "phantom_status": status,
-        "phantom_output_keys": list(output.keys()) if isinstance(output, dict) else None,
-        "parsed_result_count": len(results) if isinstance(results, list) else None,
-        "parsed_sample": results[:2] if isinstance(results, list) else results,
-        "db_company_count": companies,
-    }
