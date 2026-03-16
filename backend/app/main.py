@@ -17,7 +17,6 @@ from app.services.salesnav_builder import build_salesnav_company_search
 from app.phantom_service import (
     extract_container_id,
     launch_company_search,
-    stop_agent,
     get_container_status,
     fetch_container_results,
 )
@@ -354,8 +353,6 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
         or build_salesnav_company_search(data)
     )
 
-    stop_response = stop_agent()
-
     response = launch_company_search(search_url)
     container_id = extract_container_id(response)
 
@@ -369,7 +366,6 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
             "search_url": search_url,
             "error": "Phantom launch did not return containerId",
             "phantom_response": response,
-            "stop_response": stop_response,
         }
 
     request.container_id = str(container_id)
@@ -386,7 +382,6 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
         "request_id": request.id,
         "search_url": search_url,
         "container_id": str(container_id),
-        "stop_response": stop_response,
     }
 
 
