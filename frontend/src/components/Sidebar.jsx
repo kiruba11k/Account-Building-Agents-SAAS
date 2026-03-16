@@ -13,8 +13,8 @@ export default function Sidebar() {
   return (
     <aside className="glass-panel neon-ring relative z-10 m-4 hidden w-72 rounded-3xl p-6 md:block">
       <div className="mb-10">
-        <p className="text-xs uppercase tracking-[0.35em] text-cyan-200/80">LeadForge</p>
-        <h1 className="float-soft mt-2 text-3xl font-black leading-tight text-white">Growth Console</h1>
+        <p className="text-xs uppercase tracking-[0.35em] text-cyan-200/80">LeadStrategus</p>
+        <h1 className="float-soft mt-2 text-3xl font-black leading-tight text-white">Agents</h1>
       </div>
 
       <nav className="space-y-3">
