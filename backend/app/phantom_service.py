@@ -1,10 +1,11 @@
 import os
 import re
-import json
 import csv
+import json
 from io import StringIO
-import requests
+from typing import Any, Dict, List
 
+import requests
 
 PHANTOM_API_KEY = os.getenv("PHANTOM_API_KEY")
 PHANTOM_AGENT_ID = os.getenv("PHANTOM_AGENT_ID")
@@ -14,8 +15,15 @@ BASE_URL = "https://api.phantombuster.com/api/v2"
 
 HEADERS = {
     "X-Phantombuster-Key-1": PHANTOM_API_KEY,
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
 }
+
+
+def _safe_json(response):
+    try:
+        return response.json()
+    except Exception:
+        return {"raw_text": response.text}
 
 
 def _post_to_first_success(endpoint_candidates, payload, action_name):
@@ -27,22 +35,23 @@ def _post_to_first_success(endpoint_candidates, payload, action_name):
                 f"{BASE_URL}{endpoint}",
                 json=payload,
                 headers=HEADERS,
-                timeout=30
+                timeout=30,
             )
 
             if 200 <= r.status_code < 300:
-                response = r.json() if r.content else {"ok": True}
-                print(f"Phantom {action_name} response:", response)
+                response = _safe_json(r) if r.content else {"ok": True}
+                print(f"[Phantom] {action_name} response:", response)
                 return response
 
             last_error = f"{endpoint} returned {r.status_code}: {r.text}"
         except Exception as e:
             last_error = f"{endpoint} failed: {str(e)}"
 
-    print(f"Phantom {action_name} warning:", last_error)
+    print(f"[Phantom] {action_name} warning:", last_error)
+
     return {
         "warning": f"Unable to {action_name} on Phantom agent",
-        "details": last_error
+        "details": last_error,
     }
 
 
@@ -55,6 +64,7 @@ def extract_container_id(response):
         (response.get("data") or {}).get("containerId") if isinstance(response.get("data"), dict) else None,
         (response.get("container") or {}).get("id") if isinstance(response.get("container"), dict) else None,
         (response.get("data") or {}).get("id") if isinstance(response.get("data"), dict) else None,
+        response.get("id"),
     ]
 
     for candidate in candidates:
@@ -67,6 +77,10 @@ def extract_container_id(response):
 
     return None
 
+
+# --------------------------------------------------
+# Launch Phantom Agent
+# --------------------------------------------------
 
 def launch_company_search(search_url):
     payload = {
@@ -84,8 +98,8 @@ def launch_company_search(search_url):
                 {
                     "identityId": PHANTOM_IDENTITY_ID,
                 }
-            ]
-        }
+            ],
+        },
     }
 
     try:
@@ -93,256 +107,263 @@ def launch_company_search(search_url):
             f"{BASE_URL}/agents/launch",
             json=payload,
             headers=HEADERS,
-            timeout=30
+            timeout=30,
         )
         r.raise_for_status()
-        response = r.json()
+        response = _safe_json(r)
     except Exception as e:
-        response = {"error": str(e), "payload": payload}
+        response = {
+            "error": str(e),
+            "payload": payload,
+        }
 
-    print("Phantom launch response:", response)
+    print("[Phantom] launch response:", response)
     return response
 
 
+# --------------------------------------------------
+# Optional cleanup endpoints
+# not relied upon
+# --------------------------------------------------
+
 def clear_agent_output():
     payload = {"id": PHANTOM_AGENT_ID}
+
     endpoints = [
         "/agents/clear-output",
         "/agent/clear-output",
         "/agents/delete-output",
         "/agent/delete-output",
     ]
+
     return _post_to_first_success(endpoints, payload, "clear output")
 
 
 def clear_agent_cache():
     payload = {"id": PHANTOM_AGENT_ID}
+
     endpoints = [
         "/agents/clear-cache",
         "/agent/clear-cache",
         "/agents/delete-cache",
         "/agent/delete-cache",
     ]
+
     return _post_to_first_success(endpoints, payload, "clear cache")
 
+
+# --------------------------------------------------
+# Container status
+# --------------------------------------------------
 
 def get_container_status(container_id):
     r = requests.get(
         f"{BASE_URL}/containers/fetch",
         params={"id": container_id},
         headers=HEADERS,
-        timeout=30
+        timeout=30,
     )
     r.raise_for_status()
-    response = r.json()
-    print("Container status:", response)
+    response = _safe_json(r)
+    print("[Phantom] container status:", response)
     return response
 
+
+# --------------------------------------------------
+# Container result object
+# --------------------------------------------------
+
+def fetch_container_result_object(container_id):
+    """
+    Prefer this over fetch-output if available.
+    """
+    candidate_endpoints = [
+        "/containers/fetch-result-object",
+        "/container/fetch-result-object",
+    ]
+
+    last_error = None
+
+    for endpoint in candidate_endpoints:
+        try:
+            r = requests.get(
+                f"{BASE_URL}{endpoint}",
+                params={"id": container_id},
+                headers=HEADERS,
+                timeout=30,
+            )
+
+            if 200 <= r.status_code < 300:
+                response = _safe_json(r)
+                print("[Phantom] result object:", response)
+                return response
+
+            last_error = f"{endpoint} returned {r.status_code}: {r.text}"
+        except Exception as e:
+            last_error = f"{endpoint} failed: {e}"
+
+    print("[Phantom] fetch-result-object warning:", last_error)
+    return None
+
+
+# --------------------------------------------------
+# Container output
+# --------------------------------------------------
 
 def fetch_container_output(container_id):
     r = requests.get(
         f"{BASE_URL}/containers/fetch-output",
         params={"id": container_id},
         headers=HEADERS,
-        timeout=30
+        timeout=30,
     )
     r.raise_for_status()
-    response = r.json()
-    print("Container output:", response)
+    response = _safe_json(r)
+    print("[Phantom] container output:", response)
     return response
 
 
-def _looks_like_company_row(row: dict) -> bool:
-    if not isinstance(row, dict) or not row:
-        return False
+# --------------------------------------------------
+# Parsing helpers
+# --------------------------------------------------
 
-    keys_lower = {str(k).strip().lower() for k in row.keys() if k is not None}
+def _parse_as_json_or_table(content_text: str) -> List[Dict[str, Any]]:
+    if not isinstance(content_text, str):
+        return []
 
-    expected_signals = {
-        "companyurl",
-        "companyname",
-        "regularcompanyurl",
-        "industry",
-        "employeescount",
-        "employeecountrange",
-        "companyid",
-        "description",
-        "logourl",
-        "ishiring",
-        "query",
-        "timestamp",
-        "searchaccountprofileid",
-        "searchaccountprofilename",
-    }
-
-    matched = len(keys_lower.intersection(expected_signals))
-
-    if matched >= 2:
-        return True
-
-    company_name = row.get("companyName") or row.get("companyname")
-    company_url = row.get("companyUrl") or row.get("companyurl")
-    regular_url = row.get("regularCompanyUrl") or row.get("regularcompanyurl")
-
-    if company_name and (company_url or regular_url):
-        return True
-
-    return False
-
-
-def _is_log_text(text: str) -> bool:
+    text = content_text.strip()
     if not text:
-        return False
+        return []
 
-    lowered = text.lower()
-
-    log_markers = [
-        "(node:",
-        "aws sdk for javascript",
-        "maintenance mode",
-        "please migrate your code",
-        "[info_]",
-        "process finished successfully",
-        "this search has already been processed",
-        "number of results to scrape",
-        "warning",
-    ]
-
-    return any(marker in lowered for marker in log_markers)
-
-
-def _clean_rows(rows):
-    cleaned = []
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-
-        # drop rows that are clearly logs
-        joined = " | ".join(
-            f"{k}:{v}" for k, v in row.items()
-            if v is not None
-        )
-
-        if _is_log_text(joined):
-            continue
-
-        if _looks_like_company_row(row):
-            cleaned.append(row)
-
-    return cleaned
-
-
-def _parse_text_as_json(content_text: str):
+    # 1. Try JSON
     try:
-        parsed = json.loads(content_text)
+        parsed = json.loads(text)
+
+        if isinstance(parsed, list):
+            return [row for row in parsed if isinstance(row, dict)]
+
+        if isinstance(parsed, dict):
+            for nested_key in ["data", "results", "items", "rows"]:
+                nested = parsed.get(nested_key)
+                if isinstance(nested, list):
+                    return [row for row in nested if isinstance(row, dict)]
     except Exception:
-        return []
+        pass
 
-    if isinstance(parsed, list):
-        return _clean_rows(parsed)
-
-    if isinstance(parsed, dict):
-        for nested_key in ["data", "results", "items", "rows"]:
-            nested = parsed.get(nested_key)
-            if isinstance(nested, list):
-                return _clean_rows(nested)
-
-    return []
-
-
-def _parse_text_as_csv(content_text: str):
-    if not content_text or _is_log_text(content_text):
-        return []
-
-    delimiter = "\t" if "\t" in content_text else ","
+    # 2. Try CSV / TSV
+    delimiter = "\t" if "\t" in text else ","
 
     try:
-        rows = list(csv.DictReader(StringIO(content_text), delimiter=delimiter))
-        rows = [row for row in rows if isinstance(row, dict) and any(row.values())]
-        return _clean_rows(rows)
+        rows = list(csv.DictReader(StringIO(text), delimiter=delimiter))
+        return [row for row in rows if isinstance(row, dict) and any(v not in [None, ""] for v in row.values())]
     except Exception:
         return []
 
 
-def _fetch_url_rows(url: str):
-    try:
-        fetched = requests.get(url, timeout=30)
-        fetched.raise_for_status()
-        text = fetched.text
-
-        rows = _parse_text_as_json(text)
-        if rows:
-            return rows
-
-        rows = _parse_text_as_csv(text)
-        if rows:
-            return rows
-
-        return []
-    except Exception as e:
-        print("Failed to fetch Phantom output URL:", e)
+def _from_tabular_string_or_url(raw_value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw_value, str):
         return []
 
+    text = raw_value.strip()
+    if not text:
+        return []
 
-def _extract_rows(payload):
+    if text.startswith("http://") or text.startswith("https://"):
+        try:
+            fetched = requests.get(text, timeout=30)
+            fetched.raise_for_status()
+            return _parse_as_json_or_table(fetched.text)
+        except Exception as e:
+            print(f"[Phantom] failed to fetch output URL: {e}")
+            return []
+
+    return _parse_as_json_or_table(text)
+
+
+def _extract_rows(payload: Any) -> List[Dict[str, Any]]:
     if isinstance(payload, list):
-        return _clean_rows(payload)
+        return [row for row in payload if isinstance(row, dict)]
 
     if not isinstance(payload, dict):
         return []
 
-    # 1. Best case: structured list fields
+    # direct known list containers
     for key in ["data", "results", "items", "rows"]:
         candidate = payload.get(key)
 
         if isinstance(candidate, list):
-            rows = _clean_rows(candidate)
-            if rows:
-                return rows
-
-        if isinstance(candidate, dict):
-            rows = _extract_rows(candidate)
-            if rows:
-                return rows
-
-    # 2. Try URL-based outputs first
-    for key in ["outputUrl", "fileUrl", "downloadUrl"]:
-        candidate = payload.get(key)
-        if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
-            rows = _fetch_url_rows(candidate)
-            if rows:
-                return rows
-
-    # 3. Try nested result objects
-    for key in ["resultObject", "result", "output"]:
-        candidate = payload.get(key)
-
-        if isinstance(candidate, dict):
-            rows = _extract_rows(candidate)
-            if rows:
-                return rows
+            return [row for row in candidate if isinstance(row, dict)]
 
         if isinstance(candidate, str):
-            if candidate.startswith(("http://", "https://")):
-                rows = _fetch_url_rows(candidate)
-                if rows:
-                    return rows
+            parsed = _from_tabular_string_or_url(candidate)
+            if parsed:
+                return parsed
 
-            rows = _parse_text_as_json(candidate)
-            if rows:
-                return rows
+        if isinstance(candidate, dict):
+            nested = _extract_rows(candidate)
+            if nested:
+                return nested
 
-            rows = _parse_text_as_csv(candidate)
-            if rows:
-                return rows
+    # other output-bearing fields
+    for key in [
+        "output",
+        "outputUrl",
+        "resultObject",
+        "result",
+        "csv",
+        "json",
+        "fileUrl",
+        "downloadUrl",
+        "content",
+        "text",
+    ]:
+        candidate = payload.get(key)
+
+        if isinstance(candidate, list):
+            return [row for row in candidate if isinstance(row, dict)]
+
+        if isinstance(candidate, str):
+            parsed = _from_tabular_string_or_url(candidate)
+            if parsed:
+                return parsed
+
+        if isinstance(candidate, dict):
+            nested = _extract_rows(candidate)
+            if nested:
+                return nested
+
+    # last fallback: inspect nested dicts
+    for _, candidate in payload.items():
+        if isinstance(candidate, dict):
+            nested = _extract_rows(candidate)
+            if nested:
+                return nested
+        elif isinstance(candidate, str):
+            parsed = _from_tabular_string_or_url(candidate)
+            if parsed:
+                return parsed
 
     return []
 
 
+# --------------------------------------------------
+# Public normalized fetch
+# --------------------------------------------------
+
 def fetch_container_results(container_id):
-    output = fetch_container_output(container_id)
-    rows = _extract_rows(output)
-    print("Filtered company rows count:", len(rows))
-    print("Filtered company rows sample:", rows[:2] if rows else [])
+    """
+    Prefer result object first.
+    Fallback to fetch-output.
+    """
+    result_object_payload = fetch_container_result_object(container_id)
+    rows = _extract_rows(result_object_payload) if result_object_payload else []
+
+    if rows:
+        print(f"[Phantom] rows extracted from result object: {len(rows)}")
+        return rows
+
+    output_payload = fetch_container_output(container_id)
+    rows = _extract_rows(output_payload)
+
+    print(f"[Phantom] rows extracted from output: {len(rows)}")
     return rows
