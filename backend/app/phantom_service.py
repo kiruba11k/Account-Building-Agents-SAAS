@@ -26,35 +26,6 @@ def _safe_json(response):
         return {"raw_text": response.text}
 
 
-def _post_to_first_success(endpoint_candidates, payload, action_name):
-    last_error = None
-
-    for endpoint in endpoint_candidates:
-        try:
-            r = requests.post(
-                f"{BASE_URL}{endpoint}",
-                json=payload,
-                headers=HEADERS,
-                timeout=30,
-            )
-
-            if 200 <= r.status_code < 300:
-                response = _safe_json(r) if r.content else {"ok": True}
-                print(f"[Phantom] {action_name} response:", response)
-                return response
-
-            last_error = f"{endpoint} returned {r.status_code}: {r.text}"
-        except Exception as e:
-            last_error = f"{endpoint} failed: {str(e)}"
-
-    print(f"[Phantom] {action_name} warning:", last_error)
-
-    return {
-        "warning": f"Unable to {action_name} on Phantom agent",
-        "details": last_error,
-    }
-
-
 def extract_container_id(response):
     if not isinstance(response, dict):
         return None
@@ -70,7 +41,6 @@ def extract_container_id(response):
     for candidate in candidates:
         if candidate is None:
             continue
-
         candidate_str = str(candidate).strip()
         if re.fullmatch(r"\d+", candidate_str):
             return candidate_str
@@ -78,15 +48,9 @@ def extract_container_id(response):
     return None
 
 
-# --------------------------------------------------
-# Launch Phantom Agent
-# --------------------------------------------------
-
-def launch_company_search(search_url):
+def launch_company_search(search_url: str):
     payload = {
         "id": PHANTOM_AGENT_ID,
-        "clearCache": True,
-        "clearOutput": True,
         "argument": {
             "inputType": "salesNavigatorSearchUrl",
             "salesNavigatorSearchUrl": search_url,
@@ -110,53 +74,28 @@ def launch_company_search(search_url):
             timeout=30,
         )
         r.raise_for_status()
-        response = _safe_json(r)
+        return _safe_json(r)
     except Exception as e:
-        response = {
-            "error": str(e),
-            "payload": payload,
-        }
-
-    print("[Phantom] launch response:", response)
-    return response
+        return {"error": str(e), "payload": payload}
 
 
-# --------------------------------------------------
-# Optional cleanup endpoints
-# not relied upon
-# --------------------------------------------------
-
-def clear_agent_output():
+def stop_agent():
     payload = {"id": PHANTOM_AGENT_ID}
-
-    endpoints = [
-        "/agents/clear-output",
-        "/agent/clear-output",
-        "/agents/delete-output",
-        "/agent/delete-output",
-    ]
-
-    return _post_to_first_success(endpoints, payload, "clear output")
-
-
-def clear_agent_cache():
-    payload = {"id": PHANTOM_AGENT_ID}
-
-    endpoints = [
-        "/agents/clear-cache",
-        "/agent/clear-cache",
-        "/agents/delete-cache",
-        "/agent/delete-cache",
-    ]
-
-    return _post_to_first_success(endpoints, payload, "clear cache")
+    try:
+        r = requests.post(
+            f"{BASE_URL}/agents/stop",
+            json=payload,
+            headers=HEADERS,
+            timeout=30,
+        )
+        if 200 <= r.status_code < 300:
+            return _safe_json(r)
+        return {"warning": "Unable to stop Phantom agent", "details": r.text}
+    except Exception as e:
+        return {"warning": "Unable to stop Phantom agent", "details": str(e)}
 
 
-# --------------------------------------------------
-# Container status
-# --------------------------------------------------
-
-def get_container_status(container_id):
+def get_container_status(container_id: str):
     r = requests.get(
         f"{BASE_URL}/containers/fetch",
         params={"id": container_id},
@@ -164,53 +103,25 @@ def get_container_status(container_id):
         timeout=30,
     )
     r.raise_for_status()
-    response = _safe_json(r)
-    print("[Phantom] container status:", response)
-    return response
+    return _safe_json(r)
 
 
-# --------------------------------------------------
-# Container result object
-# --------------------------------------------------
-
-def fetch_container_result_object(container_id):
-    """
-    Prefer this over fetch-output if available.
-    """
-    candidate_endpoints = [
-        "/containers/fetch-result-object",
-        "/container/fetch-result-object",
-    ]
-
-    last_error = None
-
-    for endpoint in candidate_endpoints:
-        try:
-            r = requests.get(
-                f"{BASE_URL}{endpoint}",
-                params={"id": container_id},
-                headers=HEADERS,
-                timeout=30,
-            )
-
-            if 200 <= r.status_code < 300:
-                response = _safe_json(r)
-                print("[Phantom] result object:", response)
-                return response
-
-            last_error = f"{endpoint} returned {r.status_code}: {r.text}"
-        except Exception as e:
-            last_error = f"{endpoint} failed: {e}"
-
-    print("[Phantom] fetch-result-object warning:", last_error)
-    return None
+def fetch_container_result_object(container_id: str):
+    try:
+        r = requests.get(
+            f"{BASE_URL}/containers/fetch-result-object",
+            params={"id": container_id},
+            headers=HEADERS,
+            timeout=30,
+        )
+        if 200 <= r.status_code < 300:
+            return _safe_json(r)
+        return None
+    except Exception:
+        return None
 
 
-# --------------------------------------------------
-# Container output
-# --------------------------------------------------
-
-def fetch_container_output(container_id):
+def fetch_container_output(container_id: str):
     r = requests.get(
         f"{BASE_URL}/containers/fetch-output",
         params={"id": container_id},
@@ -218,14 +129,8 @@ def fetch_container_output(container_id):
         timeout=30,
     )
     r.raise_for_status()
-    response = _safe_json(r)
-    print("[Phantom] container output:", response)
-    return response
+    return _safe_json(r)
 
-
-# --------------------------------------------------
-# Parsing helpers
-# --------------------------------------------------
 
 def _parse_as_json_or_table(content_text: str) -> List[Dict[str, Any]]:
     if not isinstance(content_text, str):
@@ -235,7 +140,6 @@ def _parse_as_json_or_table(content_text: str) -> List[Dict[str, Any]]:
     if not text:
         return []
 
-    # 1. Try JSON
     try:
         parsed = json.loads(text)
 
@@ -250,7 +154,6 @@ def _parse_as_json_or_table(content_text: str) -> List[Dict[str, Any]]:
     except Exception:
         pass
 
-    # 2. Try CSV / TSV
     delimiter = "\t" if "\t" in text else ","
 
     try:
@@ -260,7 +163,7 @@ def _parse_as_json_or_table(content_text: str) -> List[Dict[str, Any]]:
         return []
 
 
-def _from_tabular_string_or_url(raw_value: Any) -> List[Dict[str, Any]]:
+def _from_string_or_url(raw_value: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw_value, str):
         return []
 
@@ -273,8 +176,7 @@ def _from_tabular_string_or_url(raw_value: Any) -> List[Dict[str, Any]]:
             fetched = requests.get(text, timeout=30)
             fetched.raise_for_status()
             return _parse_as_json_or_table(fetched.text)
-        except Exception as e:
-            print(f"[Phantom] failed to fetch output URL: {e}")
+        except Exception:
             return []
 
     return _parse_as_json_or_table(text)
@@ -287,7 +189,6 @@ def _extract_rows(payload: Any) -> List[Dict[str, Any]]:
     if not isinstance(payload, dict):
         return []
 
-    # direct known list containers
     for key in ["data", "results", "items", "rows"]:
         candidate = payload.get(key)
 
@@ -295,7 +196,7 @@ def _extract_rows(payload: Any) -> List[Dict[str, Any]]:
             return [row for row in candidate if isinstance(row, dict)]
 
         if isinstance(candidate, str):
-            parsed = _from_tabular_string_or_url(candidate)
+            parsed = _from_string_or_url(candidate)
             if parsed:
                 return parsed
 
@@ -304,26 +205,14 @@ def _extract_rows(payload: Any) -> List[Dict[str, Any]]:
             if nested:
                 return nested
 
-    # other output-bearing fields
-    for key in [
-        "output",
-        "outputUrl",
-        "resultObject",
-        "result",
-        "csv",
-        "json",
-        "fileUrl",
-        "downloadUrl",
-        "content",
-        "text",
-    ]:
+    for key in ["output", "outputUrl", "resultObject", "result", "csv", "json", "fileUrl", "downloadUrl", "content", "text"]:
         candidate = payload.get(key)
 
         if isinstance(candidate, list):
             return [row for row in candidate if isinstance(row, dict)]
 
         if isinstance(candidate, str):
-            parsed = _from_tabular_string_or_url(candidate)
+            parsed = _from_string_or_url(candidate)
             if parsed:
                 return parsed
 
@@ -332,38 +221,25 @@ def _extract_rows(payload: Any) -> List[Dict[str, Any]]:
             if nested:
                 return nested
 
-    # last fallback: inspect nested dicts
-    for _, candidate in payload.items():
-        if isinstance(candidate, dict):
-            nested = _extract_rows(candidate)
+    for _, value in payload.items():
+        if isinstance(value, dict):
+            nested = _extract_rows(value)
             if nested:
                 return nested
-        elif isinstance(candidate, str):
-            parsed = _from_tabular_string_or_url(candidate)
+        elif isinstance(value, str):
+            parsed = _from_string_or_url(value)
             if parsed:
                 return parsed
 
     return []
 
 
-# --------------------------------------------------
-# Public normalized fetch
-# --------------------------------------------------
-
-def fetch_container_results(container_id):
-    """
-    Prefer result object first.
-    Fallback to fetch-output.
-    """
-    result_object_payload = fetch_container_result_object(container_id)
-    rows = _extract_rows(result_object_payload) if result_object_payload else []
+def fetch_container_results(container_id: str) -> List[Dict[str, Any]]:
+    result_object = fetch_container_result_object(container_id)
+    rows = _extract_rows(result_object) if result_object else []
 
     if rows:
-        print(f"[Phantom] rows extracted from result object: {len(rows)}")
         return rows
 
     output_payload = fetch_container_output(container_id)
-    rows = _extract_rows(output_payload)
-
-    print(f"[Phantom] rows extracted from output: {len(rows)}")
-    return rows
+    return _extract_rows(output_payload)
