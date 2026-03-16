@@ -11,24 +11,32 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="w-64 bg-gray-900 text-white p-6">
-      <h1 className="text-2xl font-bold mb-10">LeadForge</h1>
+    <aside className="glass-panel neon-ring relative z-10 m-4 hidden w-72 rounded-3xl p-6 md:block">
+      <div className="mb-10">
+        <p className="text-xs uppercase tracking-[0.35em] text-cyan-200/80">LeadForge</p>
+        <h1 className="float-soft mt-2 text-3xl font-black leading-tight text-white">Growth Console</h1>
+      </div>
 
-      <nav className="space-y-4">
-        {menu.map(item => (
-          <Link
-            key={item.path}
-            to={item.path}
-            className={`block px-4 py-2 rounded-lg transition ${
-              location.pathname === item.path
-                ? "bg-gray-700"
-                : "hover:bg-gray-800"
-            }`}
-          >
-            {item.icon} {item.label}
-          </Link>
-        ))}
+      <nav className="space-y-3">
+        {menu.map((item) => {
+          const active = location.pathname === item.path;
+
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`card-hover flex items-center gap-3 rounded-2xl border px-4 py-3 transition ${
+                active
+                  ? "border-cyan-200/50 bg-cyan-300/20 text-cyan-100"
+                  : "border-white/10 bg-white/5 text-slate-200 hover:border-cyan-100/40 hover:bg-white/15"
+              }`}
+            >
+              <span className="text-lg">{item.icon}</span>
+              <span className="font-medium">{item.label}</span>
+            </Link>
+          );
+        })}
       </nav>
-    </div>
+    </aside>
   );
 }
