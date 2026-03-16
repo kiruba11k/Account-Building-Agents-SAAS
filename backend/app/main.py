@@ -78,15 +78,10 @@ def _pick_first(item, keys):
 
 
 def _extract_company_fields(item: dict):
-    """
-    Flexible alias-based extraction for app-level normalized fields only.
-    Export does NOT depend on this mapping.
-    """
-
     linkedin_url = _pick_first(item, [
+        "regularCompanyUrl",
         "companyUrl",
         "companyLinkedinUrl",
-        "regularCompanyUrl",
         "linkedInCompanyUrl",
         "linkedinUrl",
         "linkedin_url"
@@ -141,6 +136,35 @@ def _extract_company_fields(item: dict):
     }
 
 
+def _looks_like_real_company(item: dict) -> bool:
+    if not isinstance(item, dict) or not item:
+        return False
+
+    if item.get("companyName") and (item.get("companyUrl") or item.get("regularCompanyUrl")):
+        return True
+
+    keys_lower = {str(k).strip().lower() for k in item.keys() if k is not None}
+
+    expected = {
+        "companyurl",
+        "companyname",
+        "description",
+        "companyid",
+        "regularcompanyurl",
+        "industry",
+        "employeescount",
+        "employeecountrange",
+        "logourl",
+        "ishiring",
+        "query",
+        "timestamp",
+        "searchaccountprofileid",
+        "searchaccountprofilename",
+    }
+
+    return len(keys_lower.intersection(expected)) >= 2
+
+
 def poll_search_and_store(request_id, container_id):
     db = SessionLocal()
 
@@ -152,6 +176,7 @@ def poll_search_and_store(request_id, container_id):
 
         request.phase = "searching"
         request.progress = 25
+
         db.query(Company).filter_by(request_id=request_id).delete()
         db.commit()
 
@@ -186,6 +211,12 @@ def poll_search_and_store(request_id, container_id):
 
                 for item in results:
                     if not isinstance(item, dict):
+                        continue
+
+                    if not item:
+                        continue
+
+                    if not _looks_like_real_company(item):
                         continue
 
                     extracted = _extract_company_fields(item)
