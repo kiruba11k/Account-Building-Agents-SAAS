@@ -10,11 +10,15 @@ import Results from "./pages/Results";
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex min-h-screen">
+      <div className="relative flex min-h-screen overflow-hidden text-slate-100">
+        <div className="pointer-events-none absolute -left-10 top-10 h-56 w-56 rounded-full bg-cyan-400/30 blur-3xl" />
+        <div className="pointer-events-none absolute right-0 top-56 h-64 w-64 rounded-full bg-purple-500/30 blur-3xl" />
+
         <Sidebar />
-        <div className="flex-1 flex flex-col">
+
+        <div className="relative z-10 flex flex-1 flex-col">
           <Header />
-          <div className="p-8">
+          <main className="p-6 md:p-8">
             <Routes>
               <Route path="/" element={<SalesNav />} />
               <Route path="/google" element={<GoogleAgent />} />
@@ -22,7 +26,7 @@ export default function App() {
               <Route path="/requests" element={<Requests />} />
               <Route path="/results/:id" element={<Results />} />
             </Routes>
-          </div>
+          </main>
         </div>
       </div>
     </BrowserRouter>

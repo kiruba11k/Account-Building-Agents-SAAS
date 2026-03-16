@@ -4,7 +4,6 @@ import API from "../api";
 import { useNavigate } from "react-router-dom";
 
 export default function SalesNav() {
-
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
 
@@ -15,198 +14,154 @@ export default function SalesNav() {
   const [keywordsExclude, setKeywordsExclude] = useState([]);
 
   const [formData, setFormData] = useState({
-
     request_name: "",
-
     employee_min: "",
     employee_max: "",
-
     revenue_min_usd: "",
     revenue_max_usd: "",
-
     founded_year_min: "",
     founded_year_max: "",
-
     max_results: 1000,
-
     notes: "",
-
     company_status: "Active",
     source_priority: "SalesNav>Google",
     dedupe_key: "domain",
-    output_fields_profile: "standard_v1"
+    output_fields_profile: "standard_v1",
   });
 
   const handleChange = (e) => {
-
     const { name, value } = e.target;
-
     setFormData({
       ...formData,
-      [name]: value
+      [name]: value,
     });
-
   };
 
   const launchAgent = async () => {
-
     setLoading(true);
 
     const payload = {
-
       ...formData,
-
       geo_country: countries.join(";"),
-
       industry_include: industriesInclude.join(";"),
       industry_exclude: industriesExclude.join(";"),
-
       keywords_include: keywordsInclude.join(";"),
-      keywords_exclude: keywordsExclude.join(";")
-
+      keywords_exclude: keywordsExclude.join(";"),
     };
 
     try {
-
       const res = await API.post("/api/run-salesnav", payload);
-
       navigate(`/results/${res.data.request_id}`);
-
     } catch {
-
       alert("Agent launch failed");
-
     }
 
     setLoading(false);
-
   };
 
   return (
-
-    <div className="flex gap-8">
-
-      {/* LEFT FILTER PANEL */}
-
-      <div className="w-96 bg-white rounded-xl shadow p-6 space-y-6 sticky top-6 h-fit">
-
-        <h2 className="text-xl font-bold">
-          Filters
-        </h2>
+    <div className="grid gap-7 lg:grid-cols-[400px_1fr]">
+      <div className="glass-panel card-hover sticky top-6 h-fit rounded-3xl p-6">
+        <h2 className="mb-6 text-xl font-bold text-white">Filters</h2>
 
         <input
           name="request_name"
           value={formData.request_name}
           onChange={handleChange}
           placeholder="Request Name"
-          className="border px-3 py-2 rounded w-full"
+          className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
         />
 
-        <MultiValueInput
-          label="Countries"
-          values={countries}
-          setValues={setCountries}
-        />
+        <div className="mt-5 space-y-5">
+          <MultiValueInput label="Countries" values={countries} setValues={setCountries} />
+          <MultiValueInput
+            label="Include Industries"
+            values={industriesInclude}
+            setValues={setIndustriesInclude}
+          />
+          <MultiValueInput
+            label="Exclude Industries"
+            values={industriesExclude}
+            setValues={setIndustriesExclude}
+          />
 
-        <MultiValueInput
-          label="Include Industries"
-          values={industriesInclude}
-          setValues={setIndustriesInclude}
-        />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              name="employee_min"
+              value={formData.employee_min}
+              onChange={handleChange}
+              placeholder="Employee Min"
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+            />
 
-        <MultiValueInput
-          label="Exclude Industries"
-          values={industriesExclude}
-          setValues={setIndustriesExclude}
-        />
+            <input
+              name="employee_max"
+              value={formData.employee_max}
+              onChange={handleChange}
+              placeholder="Employee Max"
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+            />
+          </div>
 
-        <div className="grid grid-cols-2 gap-2">
+          <MultiValueInput
+            label="Include Keywords"
+            values={keywordsInclude}
+            setValues={setKeywordsInclude}
+          />
 
-          <input
-            name="employee_min"
-            value={formData.employee_min}
-            onChange={handleChange}
-            placeholder="Employee Min"
-            className="border px-3 py-2 rounded"
+          <MultiValueInput
+            label="Exclude Keywords"
+            values={keywordsExclude}
+            setValues={setKeywordsExclude}
           />
 
           <input
-            name="employee_max"
-            value={formData.employee_max}
+            name="max_results"
+            value={formData.max_results}
             onChange={handleChange}
-            placeholder="Employee Max"
-            className="border px-3 py-2 rounded"
+            placeholder="Max Results"
+            className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
           />
-
         </div>
-
-        <MultiValueInput
-          label="Include Keywords"
-          values={keywordsInclude}
-          setValues={setKeywordsInclude}
-        />
-
-        <MultiValueInput
-          label="Exclude Keywords"
-          values={keywordsExclude}
-          setValues={setKeywordsExclude}
-        />
-
-        <input
-          name="max_results"
-          value={formData.max_results}
-          onChange={handleChange}
-          placeholder="Max Results"
-          className="border px-3 py-2 rounded w-full"
-        />
-
       </div>
 
-      {/* RIGHT PANEL */}
+      <div className="glass-panel card-hover rounded-3xl p-8">
+        <h2 className="text-2xl font-bold text-white">Query Preview</h2>
 
-      <div className="flex-1 bg-white rounded-xl shadow p-8 space-y-6">
-
-        <h2 className="text-xl font-bold">
-          Query Preview
-        </h2>
-
-        <p className="text-gray-700">
-
+        <p className="mt-4 leading-7 text-slate-200/90">
           Searching companies in
-
-          <b> {countries.length ? countries.join(", ") : "any location"} </b>
-
+          <b className="text-cyan-200"> {countries.length ? countries.join(", ") : "any location"} </b>
           {industriesInclude.length > 0 && (
-            <> within <b>{industriesInclude.join(", ")}</b> industry</>
+            <>
+              {" "}
+              within <b className="text-cyan-200">{industriesInclude.join(", ")}</b> industry
+            </>
           )}
-
           {formData.employee_min && (
-            <> with at least <b>{formData.employee_min}</b> employees</>
+            <>
+              {" "}
+              with at least <b className="text-cyan-200">{formData.employee_min}</b> employees
+            </>
           )}
-
           {keywordsInclude.length > 0 && (
-            <> matching <b>{keywordsInclude.join(", ")}</b></>
+            <>
+              {" "}
+              matching <b className="text-cyan-200">{keywordsInclude.join(", ")}</b>
+            </>
           )}
-
         </p>
 
-        <div className="bg-gray-100 rounded-lg p-4 text-sm">
-
+        <div className="mt-6 rounded-2xl border border-indigo-200/20 bg-indigo-300/10 p-4 text-sm text-indigo-100">
           Estimated results will depend on your filters.
-
         </div>
 
         <button
           onClick={launchAgent}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
+          className="mt-8 rounded-2xl bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500 px-7 py-3 text-sm font-semibold text-white shadow-[0_10px_25px_rgba(59,130,246,0.45)] transition hover:scale-[1.02]"
         >
           {loading ? "Launching Agent..." : "Launch Agent"}
         </button>
-
       </div>
-
     </div>
-
   );
-
 }
