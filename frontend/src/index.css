@@ -2,6 +2,59 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+}
+
 body {
-  @apply bg-gray-100 text-gray-800;
+  @apply text-slate-100;
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.18), transparent 30%),
+    radial-gradient(circle at 85% 10%, rgba(168, 85, 247, 0.22), transparent 32%),
+    radial-gradient(circle at 50% 85%, rgba(45, 212, 191, 0.16), transparent 35%),
+    linear-gradient(125deg, #050816 0%, #0b1028 52%, #151a33 100%);
+  background-attachment: fixed;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@layer components {
+  .glass-panel {
+    @apply border border-white/15 bg-white/10 backdrop-blur-2xl shadow-[0_20px_45px_rgba(8,10,30,0.45)];
+  }
+
+  .neon-ring {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.2),
+      0 12px 35px rgba(56, 189, 248, 0.2),
+      0 0 30px rgba(168, 85, 247, 0.18);
+  }
+}
+
+@keyframes floatUp {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.card-hover {
+  transition: transform 220ms ease, box-shadow 220ms ease;
+  transform-style: preserve-3d;
+}
+
+.card-hover:hover {
+  transform: translateY(-4px) rotateX(3deg) rotateY(-3deg);
+  box-shadow: 0 22px 40px rgba(0, 0, 0, 0.3);
+}
+
+.float-soft {
+  animation: floatUp 5s ease-in-out infinite;
 }
