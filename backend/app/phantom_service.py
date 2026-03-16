@@ -5,6 +5,7 @@ import csv
 from io import StringIO
 import requests
 
+
 PHANTOM_API_KEY = os.getenv("PHANTOM_API_KEY")
 PHANTOM_AGENT_ID = os.getenv("PHANTOM_AGENT_ID")
 PHANTOM_IDENTITY_ID = os.getenv("PHANTOM_IDENTITY_ID")
@@ -39,7 +40,6 @@ def _post_to_first_success(endpoint_candidates, payload, action_name):
             last_error = f"{endpoint} failed: {str(e)}"
 
     print(f"Phantom {action_name} warning:", last_error)
-
     return {
         "warning": f"Unable to {action_name} on Phantom agent",
         "details": last_error
@@ -98,10 +98,7 @@ def launch_company_search(search_url):
         r.raise_for_status()
         response = r.json()
     except Exception as e:
-        response = {
-            "error": str(e),
-            "payload": payload
-        }
+        response = {"error": str(e), "payload": payload}
 
     print("Phantom launch response:", response)
     return response
@@ -109,27 +106,23 @@ def launch_company_search(search_url):
 
 def clear_agent_output():
     payload = {"id": PHANTOM_AGENT_ID}
-
     endpoints = [
         "/agents/clear-output",
         "/agent/clear-output",
         "/agents/delete-output",
         "/agent/delete-output",
     ]
-
     return _post_to_first_success(endpoints, payload, "clear output")
 
 
 def clear_agent_cache():
     payload = {"id": PHANTOM_AGENT_ID}
-
     endpoints = [
         "/agents/clear-cache",
         "/agent/clear-cache",
         "/agents/delete-cache",
         "/agent/delete-cache",
     ]
-
     return _post_to_first_success(endpoints, payload, "clear cache")
 
 
@@ -159,86 +152,197 @@ def fetch_container_output(container_id):
     return response
 
 
-def fetch_container_results(container_id):
-    output = fetch_container_output(container_id)
+def _looks_like_company_row(row: dict) -> bool:
+    if not isinstance(row, dict) or not row:
+        return False
 
-    def _parse_as_json_or_table(content_text):
-        try:
-            parsed = json.loads(content_text)
+    keys_lower = {str(k).strip().lower() for k in row.keys() if k is not None}
 
-            if isinstance(parsed, list):
-                return parsed
+    expected_signals = {
+        "companyurl",
+        "companyname",
+        "regularcompanyurl",
+        "industry",
+        "employeescount",
+        "employeecountrange",
+        "companyid",
+        "description",
+        "logourl",
+        "ishiring",
+        "query",
+        "timestamp",
+        "searchaccountprofileid",
+        "searchaccountprofilename",
+    }
 
-            if isinstance(parsed, dict):
-                for nested_key in ["data", "results", "items", "rows"]:
-                    nested = parsed.get(nested_key)
-                    if isinstance(nested, list):
-                        return nested
-        except Exception:
-            pass
+    matched = len(keys_lower.intersection(expected_signals))
 
-        delimiter = "\t" if "\t" in content_text else ","
+    if matched >= 2:
+        return True
 
-        try:
-            rows = list(csv.DictReader(StringIO(content_text), delimiter=delimiter))
-            return [row for row in rows if any(row.values())]
-        except Exception:
-            return []
+    company_name = row.get("companyName") or row.get("companyname")
+    company_url = row.get("companyUrl") or row.get("companyurl")
+    regular_url = row.get("regularCompanyUrl") or row.get("regularcompanyurl")
 
-    def _from_tabular_string(raw_value):
-        if not isinstance(raw_value, str):
-            return []
+    if company_name and (company_url or regular_url):
+        return True
 
-        text = raw_value.strip()
-        if not text:
-            return []
+    return False
 
-        if text.startswith("http://") or text.startswith("https://"):
-            try:
-                fetched = requests.get(text, timeout=30)
-                fetched.raise_for_status()
-                return _parse_as_json_or_table(fetched.text)
-            except Exception:
-                return []
 
-        return _parse_as_json_or_table(text)
+def _is_log_text(text: str) -> bool:
+    if not text:
+        return False
 
-    def _extract_rows(payload):
-        if isinstance(payload, list):
-            return payload
+    lowered = text.lower()
 
-        if not isinstance(payload, dict):
-            return []
+    log_markers = [
+        "(node:",
+        "aws sdk for javascript",
+        "maintenance mode",
+        "please migrate your code",
+        "[info_]",
+        "process finished successfully",
+        "this search has already been processed",
+        "number of results to scrape",
+        "warning",
+    ]
 
-        for key in ["data", "results", "items", "rows"]:
-            candidate = payload.get(key)
+    return any(marker in lowered for marker in log_markers)
 
-            if isinstance(candidate, list):
-                return candidate
 
-            if isinstance(candidate, str):
-                parsed_rows = _from_tabular_string(candidate)
-                if parsed_rows:
-                    return parsed_rows
+def _clean_rows(rows):
+    cleaned = []
 
-            if isinstance(candidate, dict):
-                nested_rows = _extract_rows(candidate)
-                if nested_rows:
-                    return nested_rows
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
 
-        for key in ["output", "outputUrl", "resultObject", "result", "csv", "json", "fileUrl", "downloadUrl"]:
-            candidate = payload.get(key)
+        # drop rows that are clearly logs
+        joined = " | ".join(
+            f"{k}:{v}" for k, v in row.items()
+            if v is not None
+        )
 
-            if isinstance(candidate, str):
-                parsed_rows = _from_tabular_string(candidate)
-                if parsed_rows:
-                    return parsed_rows
+        if _is_log_text(joined):
+            continue
 
-            if isinstance(candidate, dict):
-                nested_rows = _extract_rows(candidate)
-                if nested_rows:
-                    return nested_rows
+        if _looks_like_company_row(row):
+            cleaned.append(row)
 
+    return cleaned
+
+
+def _parse_text_as_json(content_text: str):
+    try:
+        parsed = json.loads(content_text)
+    except Exception:
         return []
 
-    return _extract_rows(output)
+    if isinstance(parsed, list):
+        return _clean_rows(parsed)
+
+    if isinstance(parsed, dict):
+        for nested_key in ["data", "results", "items", "rows"]:
+            nested = parsed.get(nested_key)
+            if isinstance(nested, list):
+                return _clean_rows(nested)
+
+    return []
+
+
+def _parse_text_as_csv(content_text: str):
+    if not content_text or _is_log_text(content_text):
+        return []
+
+    delimiter = "\t" if "\t" in content_text else ","
+
+    try:
+        rows = list(csv.DictReader(StringIO(content_text), delimiter=delimiter))
+        rows = [row for row in rows if isinstance(row, dict) and any(row.values())]
+        return _clean_rows(rows)
+    except Exception:
+        return []
+
+
+def _fetch_url_rows(url: str):
+    try:
+        fetched = requests.get(url, timeout=30)
+        fetched.raise_for_status()
+        text = fetched.text
+
+        rows = _parse_text_as_json(text)
+        if rows:
+            return rows
+
+        rows = _parse_text_as_csv(text)
+        if rows:
+            return rows
+
+        return []
+    except Exception as e:
+        print("Failed to fetch Phantom output URL:", e)
+        return []
+
+
+def _extract_rows(payload):
+    if isinstance(payload, list):
+        return _clean_rows(payload)
+
+    if not isinstance(payload, dict):
+        return []
+
+    # 1. Best case: structured list fields
+    for key in ["data", "results", "items", "rows"]:
+        candidate = payload.get(key)
+
+        if isinstance(candidate, list):
+            rows = _clean_rows(candidate)
+            if rows:
+                return rows
+
+        if isinstance(candidate, dict):
+            rows = _extract_rows(candidate)
+            if rows:
+                return rows
+
+    # 2. Try URL-based outputs first
+    for key in ["outputUrl", "fileUrl", "downloadUrl"]:
+        candidate = payload.get(key)
+        if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+            rows = _fetch_url_rows(candidate)
+            if rows:
+                return rows
+
+    # 3. Try nested result objects
+    for key in ["resultObject", "result", "output"]:
+        candidate = payload.get(key)
+
+        if isinstance(candidate, dict):
+            rows = _extract_rows(candidate)
+            if rows:
+                return rows
+
+        if isinstance(candidate, str):
+            if candidate.startswith(("http://", "https://")):
+                rows = _fetch_url_rows(candidate)
+                if rows:
+                    return rows
+
+            rows = _parse_text_as_json(candidate)
+            if rows:
+                return rows
+
+            rows = _parse_text_as_csv(candidate)
+            if rows:
+                return rows
+
+    return []
+
+
+def fetch_container_results(container_id):
+    output = fetch_container_output(container_id)
+    rows = _extract_rows(output)
+    print("Filtered company rows count:", len(rows))
+    print("Filtered company rows sample:", rows[:2] if rows else [])
+    return rows
