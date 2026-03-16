@@ -1,3 +1,4 @@
+# Backend runtime dependencies (frontend visual refresh required no new backend packages).
 fastapi
 uvicorn
 sqlalchemy
