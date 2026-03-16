@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, SessionLocal
 from .models import LeadRequest, Company
 from app.services.salesnav_builder import build_salesnav_company_search
+from app.services.google_discovery import run_google_places_actor
 from app.phantom_service import (
     extract_container_id,
     launch_company_search,
@@ -138,6 +139,26 @@ def _normalize_company_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "timestamp": _row_get(row, ["timestamp", "Timestamp"]),
         "search_account_profile_id": _row_get(row, ["searchAccountProfileId", "Search Account Profile Id"]),
         "search_account_profile_name": _row_get(row, ["searchAccountProfileName", "Search Account Profile Name"]),
+        "raw_data": {k: _safe_jsonable(v) for k, v in row.items()},
+    }
+
+
+def _normalize_google_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "company_url": _row_get(row, ["website", "url", "domain"]),
+        "company_name": _row_get(row, ["title", "name", "placeName"]),
+        "description": _row_get(row, ["description", "address", "categoryName"]),
+        "company_id": _row_get(row, ["placeId", "cid"]),
+        "regular_company_url": _row_get(row, ["googleMapsUrl", "url"]),
+        "industry": _row_get(row, ["categoryName", "category", "mainCategory"]),
+        "employees_count": _row_get(row, ["reviewsCount"]),
+        "employee_count_range": None,
+        "logo_url": _row_get(row, ["imageUrl", "thumbnailUrl"]),
+        "is_hiring": None,
+        "query": _row_get(row, ["searchString", "searchTerm"]),
+        "timestamp": _row_get(row, ["scrapedAt", "timestamp"]),
+        "search_account_profile_id": None,
+        "search_account_profile_name": None,
         "raw_data": {k: _safe_jsonable(v) for k, v in row.items()},
     }
 
@@ -383,6 +404,100 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
         "search_url": search_url,
         "container_id": str(container_id),
     }
+
+
+@app.post("/api/run-google-discovery")
+def run_google_discovery(data: dict, db: Session = Depends(get_db)):
+    request = LeadRequest(
+        request_name=data.get("request_name") or "Google Discovery Agent",
+        status="Running",
+        phase="searching",
+        progress=20,
+        total_results=0,
+        filters=data,
+    )
+
+    db.add(request)
+    db.commit()
+    db.refresh(request)
+
+    try:
+        rows = run_google_places_actor(data)
+
+        request.phase = "processing"
+        request.progress = 70
+        db.commit()
+
+        seen = set()
+        inserted = 0
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            normalized = _normalize_google_row(row)
+            fingerprint = (
+                normalized.get("company_id")
+                or normalized.get("regular_company_url")
+                or normalized.get("company_url")
+                or normalized.get("company_name")
+            )
+
+            if fingerprint:
+                fingerprint = str(fingerprint).strip().lower()
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+
+            company = Company(
+                request_id=request.id,
+                company_url=normalized.get("company_url"),
+                company_name=normalized.get("company_name"),
+                description=normalized.get("description"),
+                company_id=normalized.get("company_id"),
+                regular_company_url=normalized.get("regular_company_url"),
+                industry=normalized.get("industry"),
+                employees_count=normalized.get("employees_count"),
+                employee_count_range=normalized.get("employee_count_range"),
+                logo_url=normalized.get("logo_url"),
+                is_hiring=normalized.get("is_hiring"),
+                query=normalized.get("query"),
+                timestamp=normalized.get("timestamp"),
+                search_account_profile_id=normalized.get("search_account_profile_id"),
+                search_account_profile_name=normalized.get("search_account_profile_name"),
+                raw_data=normalized.get("raw_data"),
+            )
+            db.add(company)
+            inserted += 1
+
+        db.commit()
+
+        request.total_results = inserted
+        request.status = "Completed"
+        request.phase = "completed"
+        request.progress = 100
+        db.commit()
+
+        return {
+            "request_id": request.id,
+            "total_results": inserted,
+            "endpoint": "run-sync-get-dataset-items",
+            "actor": "compass~crawler-google-places",
+        }
+
+    except Exception as exc:
+        request.status = "Failed"
+        request.phase = "failed"
+        request.progress = 100
+        db.commit()
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "request_id": request.id,
+                "error": str(exc),
+            },
+        )
 
 
 @app.get("/api/request/{request_id}")
