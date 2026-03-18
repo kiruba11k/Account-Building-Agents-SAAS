@@ -4,6 +4,9 @@ import time
 import threading
 import tempfile
 from typing import Any, Dict, List
+from app.services.apify_service import run_salesnav_search, enrich_companies
+from app.services.query_splitter import split_queries
+from app.stream_manager import push_update
 
 import pandas as pd
 from fastapi import FastAPI, Depends, BackgroundTasks, Query
@@ -227,7 +230,92 @@ def resume_pending_jobs():
     finally:
         db.close()
 
+def run_pipeline(request_id, filters):
 
+    db = SessionLocal()
+
+    try:
+        request = db.query(LeadRequest).get(request_id)
+
+        queries = split_queries(filters)
+
+        request.phase = "searching"
+        request.progress = 10
+        db.commit()
+
+        all_domains = set()
+
+        def worker(search_url):
+
+            nonlocal all_domains
+
+            # 🔍 STEP 1 → SALESNAV
+            search_results = run_salesnav_search(search_url, 500)
+
+            company_urls = []
+
+            for item in search_results:
+                url = item.get("linkedinUrl") or item.get("companyLinkedinUrl")
+                if url:
+                    company_urls.append(url)
+
+            # 🔥 CHUNKING
+            for i in range(0, len(company_urls), 50):
+
+                chunk = company_urls[i:i+50]
+
+                enriched = enrich_companies(chunk)
+
+                for item in enriched:
+
+                    website = item.get("website")
+                    domain = website
+
+                    if not domain or domain in all_domains:
+                        continue
+
+                    all_domains.add(domain)
+
+                    company = Company(
+                        request_id=request_id,
+                        company_url=item.get("url"),
+                        company_name=item.get("name"),
+                        description=item.get("description"),
+                        industry=item.get("industry"),
+                        employees_count=item.get("employees"),
+                        logo_url=item.get("logo"),
+                        raw_data=item
+                    )
+
+                    db.add(company)
+                    db.commit()
+
+                    # 🔥 REAL-TIME PUSH
+                    push_update(request_id, {
+                        "name": company.company_name,
+                        "website": website
+                    })
+
+        # 🚀 PARALLEL EXECUTION
+        threads = []
+
+        for q in queries:
+            t = threading.Thread(target=worker, args=(q,))
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
+
+        request.total_results = db.query(Company).filter_by(request_id=request_id).count()
+        request.status = "Completed"
+        request.phase = "completed"
+        request.progress = 100
+
+        db.commit()
+
+    finally:
+        db.close()
 def poll_search_and_store(request_id: int, container_id: str):
     db = SessionLocal()
 
@@ -352,14 +440,18 @@ def poll_search_and_store(request_id: int, container_id: str):
     finally:
         db.close()
 
-
+@app.get("/api/stream/{request_id}")
+def stream(request_id: int):
+    return get_updates(request_id)
+    
 @app.post("/api/run-salesnav")
 def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+
     request = LeadRequest(
         request_name=data.get("request_name"),
-        status="Launching",
-        phase="searching",
-        progress=10,
+        status="Running",
+        phase="starting",
+        progress=5,
         total_results=0,
         filters=data,
     )
@@ -368,42 +460,9 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     db.commit()
     db.refresh(request)
 
-    search_url = (
-        data.get("search_url")
-        or data.get("sales_nav_url")
-        or build_salesnav_company_search(data)
-    )
+    background_tasks.add_task(run_pipeline, request.id, data)
 
-    response = launch_company_search(search_url)
-    container_id = extract_container_id(response)
-
-    if not container_id:
-        request.status = "Failed"
-        request.phase = "failed"
-        request.progress = 100
-        db.commit()
-        return {
-            "request_id": request.id,
-            "search_url": search_url,
-            "error": "Phantom launch did not return containerId",
-            "phantom_response": response,
-        }
-
-    request.container_id = str(container_id)
-    request.status = "Running"
-    db.commit()
-
-    background_tasks.add_task(
-        poll_search_and_store,
-        request.id,
-        str(container_id),
-    )
-
-    return {
-        "request_id": request.id,
-        "search_url": search_url,
-        "container_id": str(container_id),
-    }
+    return {"request_id": request.id}
 
 
 @app.post("/api/run-google-discovery")
