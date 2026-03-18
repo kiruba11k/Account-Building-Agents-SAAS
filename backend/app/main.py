@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from app.services.apify_service import run_salesnav_search, enrich_companies
 from app.services.query_splitter import split_queries
 from app.stream_manager import push_update
-
+from app.stream_manager import get_updates
 import pandas as pd
 from fastapi import FastAPI, Depends, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,12 +18,12 @@ from .database import Base, engine, SessionLocal
 from .models import LeadRequest, Company
 from app.services.salesnav_builder import build_salesnav_company_search
 from app.services.google_discovery import run_google_places_actor
-from app.phantom_service import (
-    extract_container_id,
-    launch_company_search,
-    get_container_status,
-    fetch_container_results,
-)
+# from app.phantom_service import (
+#     extract_container_id,
+#     launch_company_search,
+#     get_container_status,
+#     fetch_container_results,
+# )
 
 Base.metadata.create_all(bind=engine)
 
@@ -208,34 +208,46 @@ def _build_export_rows(companies: List[Company]) -> List[Dict[str, Any]]:
     return rows
 
 
-@app.on_event("startup")
-def resume_pending_jobs():
-    db = SessionLocal()
+# @app.on_event("startup")
+# def resume_pending_jobs():
+#     db = SessionLocal()
+#     try:
+#         pending = db.query(LeadRequest).filter(LeadRequest.status == "Running").all()
+
+#         for job in pending:
+#             if not job.container_id:
+#                 job.status = "Failed"
+#                 job.phase = "failed"
+#                 job.progress = 100
+#                 db.commit()
+#                 continue
+
+#             threading.Thread(
+#                 target=poll_search_and_store,
+#                 args=(job.id, str(job.container_id)),
+#                 daemon=True
+#             ).start()
+#     finally:
+#         db.close()
+
+from urllib.parse import urlparse
+
+def extract_domain(url):
     try:
-        pending = db.query(LeadRequest).filter(LeadRequest.status == "Running").all()
-
-        for job in pending:
-            if not job.container_id:
-                job.status = "Failed"
-                job.phase = "failed"
-                job.progress = 100
-                db.commit()
-                continue
-
-            threading.Thread(
-                target=poll_search_and_store,
-                args=(job.id, str(job.container_id)),
-                daemon=True
-            ).start()
-    finally:
-        db.close()
-
+        return urlparse(url).netloc
+    except:
+        return None
+        
 def run_pipeline(request_id, filters):
+    
 
     db = SessionLocal()
+    
 
     try:
         request = db.query(LeadRequest).get(request_id)
+        db.query(Company).filter_by(request_id=request_id).delete()
+        db.commit()
 
         queries = split_queries(filters)
 
@@ -247,198 +259,193 @@ def run_pipeline(request_id, filters):
 
         def worker(search_url):
 
-            nonlocal all_domains
+            local_db = SessionLocal()
 
-            # 🔍 STEP 1 → SALESNAV
-            search_results = run_salesnav_search(search_url, 500)
-
-            company_urls = []
-
-            for item in search_results:
-                url = item.get("linkedinUrl") or item.get("companyLinkedinUrl")
-                if url:
-                    company_urls.append(url)
-
-            # 🔥 CHUNKING
-            for i in range(0, len(company_urls), 50):
-
-                chunk = company_urls[i:i+50]
-
-                enriched = enrich_companies(chunk)
-
-                for item in enriched:
-
-                    website = item.get("website")
-                    domain = website
-
-                    if not domain or domain in all_domains:
-                        continue
-
-                    all_domains.add(domain)
-
-                    company = Company(
-                        request_id=request_id,
-                        company_url=item.get("url"),
-                        company_name=item.get("name"),
-                        description=item.get("description"),
-                        industry=item.get("industry"),
-                        employees_count=item.get("employees"),
-                        logo_url=item.get("logo"),
-                        raw_data=item
-                    )
-
-                    db.add(company)
-                    db.commit()
-
-                    # 🔥 REAL-TIME PUSH
-                    push_update(request_id, {
-                        "name": company.company_name,
-                        "website": website
-                    })
-
-        # 🚀 PARALLEL EXECUTION
-        threads = []
-
-        for q in queries:
-            t = threading.Thread(target=worker, args=(q,))
-            t.start()
-            threads.append(t)
-
-        for t in threads:
-            t.join()
-
-        request.total_results = db.query(Company).filter_by(request_id=request_id).count()
-        request.status = "Completed"
-        request.phase = "completed"
-        request.progress = 100
-
-        db.commit()
-
-    finally:
-        db.close()
-def poll_search_and_store(request_id: int, container_id: str):
-    db = SessionLocal()
-
-    try:
-        request = db.query(LeadRequest).filter_by(id=request_id).first()
-        if not request:
-            return
-
-        request.phase = "searching"
-        request.progress = 25
-        db.commit()
-
-        db.query(Company).filter_by(request_id=request_id).delete()
-        db.commit()
-
-        attempts = 0
-        max_attempts = 80
-
-        while attempts < max_attempts:
             try:
-                status_response = get_container_status(container_id)
-                status = str(status_response.get("status", "")).strip().lower()
-            except Exception:
-                attempts += 1
-                time.sleep(30)
-                continue
-
-            if status == "finished":
                 try:
-                    rows = fetch_container_results(container_id)
-                except Exception:
-                    request.status = "Failed"
-                    request.phase = "failed"
-                    request.progress = 100
-                    db.commit()
+                    search_results = run_salesnav_search(search_url, 200)
+                except Exception as e:
+                    print("Search error:", e)
                     return
 
-                request.phase = "processing"
-                request.progress = 70
-                db.commit()
+                company_urls = [
+                    item.get("linkedinUrl") or item.get("companyLinkedinUrl")
+                    for item in search_results
+                    if item.get("linkedinUrl") or item.get("companyLinkedinUrl")
+                ]
 
-                seen = set()
-                inserted = 0
+                #  LIMIT RESULTS → SAVE COST
+                company_urls = company_urls[:200]
 
-                for row in rows:
-                    if not isinstance(row, dict):
+                for i in range(0, len(company_urls), 50):
+                
+                    chunk = company_urls[i:i+50]
+
+                    try:
+                        enriched = enrich_companies(chunk)
+                    except Exception as e:
+                        print("Enrich error:", e)
                         continue
+                    
+                    for item in enriched:
+                    
+                        website = item.get("website")
 
-                    if not _is_company_row(row):
-                        continue
+                        fingerprint = (
+                            item.get("url")
+                            or item.get("linkedinUrl")
+                            or extract_domain(website)
+                        )
 
-                    normalized = _normalize_company_row(row)
+                        if not fingerprint or fingerprint in all_domains:
+                            continue
+                        
+                        all_domains.add(fingerprint)
 
-                    fingerprint = (
-                        normalized.get("company_id")
-                        or normalized.get("company_url")
-                        or normalized.get("regular_company_url")
-                        or normalized.get("company_name")
-                    )
+                        company = Company(
+                            request_id=request_id,
+                            company_url=item.get("url"),
+                            company_name=item.get("name"),
+                            description=item.get("description"),
+                            industry=item.get("industry"),
+                            employees_count=item.get("employees"),
+                            logo_url=item.get("logo"),
+                            raw_data=item
+                        )
 
-                    if fingerprint:
-                        fingerprint = str(fingerprint).strip().lower()
+                        local_db.add(company)
+                        local_db.commit()
 
-                    if fingerprint and fingerprint in seen:
-                        continue
+                        push_update(request_id, {
+                            "name": company.company_name,
+                            "website": website
+                        })
 
-                    company = Company(
-                        request_id=request_id,
-                        company_url=normalized.get("company_url"),
-                        company_name=normalized.get("company_name"),
-                        description=normalized.get("description"),
-                        company_id=normalized.get("company_id"),
-                        regular_company_url=normalized.get("regular_company_url"),
-                        industry=normalized.get("industry"),
-                        employees_count=normalized.get("employees_count"),
-                        employee_count_range=normalized.get("employee_count_range"),
-                        logo_url=normalized.get("logo_url"),
-                        is_hiring=normalized.get("is_hiring"),
-                        query=normalized.get("query"),
-                        timestamp=normalized.get("timestamp"),
-                        search_account_profile_id=normalized.get("search_account_profile_id"),
-                        search_account_profile_name=normalized.get("search_account_profile_name"),
-                        raw_data=normalized.get("raw_data"),
-                    )
+            finally:
+                local_db.close()
+# def poll_search_and_store(request_id: int, container_id: str):
+#       db = SessionLocal()
 
-                    db.add(company)
-                    inserted += 1
+#       try:
+#                 request = db.query(LeadRequest).filter_by(id=request_id).first()
+#                 if not request:
+#             return
 
-                    if fingerprint:
-                        seen.add(fingerprint)
+#         request.phase = "searching"
+#         request.progress = 25
+#         db.commit()
 
-                db.commit()
+#         db.query(Company).filter_by(request_id=request_id).delete()
+#         db.commit()
 
-                request.total_results = db.query(Company).filter_by(request_id=request_id).count()
+#         attempts = 0
+#         max_attempts = 80
 
-                if request.total_results > 0:
-                    request.status = "Completed"
-                    request.phase = "completed"
-                else:
-                    request.status = "Failed"
-                    request.phase = "failed"
+#         while attempts < max_attempts:
+#             try:
+#                 status_response = get_container_status(container_id)
+#                 status = str(status_response.get("status", "")).strip().lower()
+#             except Exception:
+#                 attempts += 1
+#                 time.sleep(30)
+#                 continue
 
-                request.progress = 100
-                db.commit()
-                return
+#             if status == "finished":
+#                 try:
+#                     rows = fetch_container_results(container_id)
+#                 except Exception:
+#                     request.status = "Failed"
+#                     request.phase = "failed"
+#                     request.progress = 100
+#                     db.commit()
+#                     return
 
-            if status in {"error", "failed", "aborted"}:
-                request.status = "Failed"
-                request.phase = "failed"
-                request.progress = 100
-                db.commit()
-                return
+#                 request.phase = "processing"
+#                 request.progress = 70
+#                 db.commit()
 
-            attempts += 1
-            time.sleep(30)
+#                 seen = set()
+#                 inserted = 0
 
-        request.status = "Timeout"
-        request.phase = "failed"
-        request.progress = 100
-        db.commit()
+#                 for row in rows:
+#                     if not isinstance(row, dict):
+#                         continue
 
-    finally:
-        db.close()
+#                     if not _is_company_row(row):
+#                         continue
+
+#                     normalized = _normalize_company_row(row)
+
+#                     fingerprint = (
+#                         normalized.get("company_id")
+#                         or normalized.get("company_url")
+#                         or normalized.get("regular_company_url")
+#                         or normalized.get("company_name")
+#                     )
+
+#                     if fingerprint:
+#                         fingerprint = str(fingerprint).strip().lower()
+
+#                     if fingerprint and fingerprint in seen:
+#                         continue
+
+#                     company = Company(
+#                         request_id=request_id,
+#                         company_url=normalized.get("company_url"),
+#                         company_name=normalized.get("company_name"),
+#                         description=normalized.get("description"),
+#                         company_id=normalized.get("company_id"),
+#                         regular_company_url=normalized.get("regular_company_url"),
+#                         industry=normalized.get("industry"),
+#                         employees_count=normalized.get("employees_count"),
+#                         employee_count_range=normalized.get("employee_count_range"),
+#                         logo_url=normalized.get("logo_url"),
+#                         is_hiring=normalized.get("is_hiring"),
+#                         query=normalized.get("query"),
+#                         timestamp=normalized.get("timestamp"),
+#                         search_account_profile_id=normalized.get("search_account_profile_id"),
+#                         search_account_profile_name=normalized.get("search_account_profile_name"),
+#                         raw_data=normalized.get("raw_data"),
+#                     )
+
+#                     db.add(company)
+#                     inserted += 1
+
+#                     if fingerprint:
+#                         seen.add(fingerprint)
+
+#                 db.commit()
+
+#                 request.total_results = db.query(Company).filter_by(request_id=request_id).count()
+
+#                 if request.total_results > 0:
+#                     request.status = "Completed"
+#                     request.phase = "completed"
+#                 else:
+#                     request.status = "Failed"
+#                     request.phase = "failed"
+
+#                 request.progress = 100
+#                 db.commit()
+#                 return
+
+#             if status in {"error", "failed", "aborted"}:
+#                 request.status = "Failed"
+#                 request.phase = "failed"
+#                 request.progress = 100
+#                 db.commit()
+#                 return
+
+#             attempts += 1
+#             time.sleep(30)
+
+#         request.status = "Timeout"
+#         request.phase = "failed"
+#         request.progress = 100
+#         db.commit()
+
+#     finally:
+#         db.close()
 
 @app.get("/api/stream/{request_id}")
 def stream(request_id: int):
