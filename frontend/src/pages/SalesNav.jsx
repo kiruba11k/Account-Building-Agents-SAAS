@@ -17,6 +17,7 @@ export default function SalesNav() {
 
   const [formData, setFormData] = useState({
     request_name: "",
+    salesnav_url: "",
     employee_min: "",
     employee_max: "",
     revenue_min_usd: "",
@@ -85,6 +86,14 @@ export default function SalesNav() {
         />
 
         <div className="mt-5 space-y-5">
+          <input
+            name="salesnav_url"
+            value={formData.salesnav_url}
+            onChange={handleChange}
+            placeholder="Sales Navigator URL (optional)"
+            className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+          />
+
           <MultiValueInput label="Countries" values={countries} setValues={setCountries} />
           <MultiValueInput
             label="Include Industries"

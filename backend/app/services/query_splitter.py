@@ -11,6 +11,9 @@ SIZE_BUCKETS = [
 
 
 def split_queries(filters):
+    direct_salesnav_url = str(filters.get("salesnav_url") or "").strip()
+    if direct_salesnav_url:
+        return [direct_salesnav_url]
 
     queries = []
 
