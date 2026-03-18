@@ -1,29 +1,31 @@
-import os
 import json
-import time
-import threading
+import math
+import os
 import tempfile
-from typing import Any, Dict, List
-from app.services.apify_service import run_salesnav_search, enrich_companies
-from app.services.query_splitter import split_queries
-from app.stream_manager import push_update
-from app.stream_manager import get_updates
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Empty
+from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
+
 import pandas as pd
-from fastapi import FastAPI, Depends, BackgroundTasks, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from .database import Base, engine, SessionLocal
-from .models import LeadRequest, Company
-from app.services.salesnav_builder import build_salesnav_company_search
+from .database import Base, SessionLocal, engine
+from .models import Company, LeadRequest
+from app.services.apify_service import enrich_companies, run_salesnav_search
 from app.services.google_discovery import run_google_places_actor
-# from app.phantom_service import (
-#     extract_container_id,
-#     launch_company_search,
-#     get_container_status,
-#     fetch_container_results,
-# )
+from app.services.query_splitter import split_queries
+from app.services.stream_manager import (
+    get_updates,
+    pop_subscriber,
+    push_update,
+    register_subscriber,
+    remove_subscriber,
+)
 
 Base.metadata.create_all(bind=engine)
 
@@ -47,10 +49,7 @@ def get_db():
 
 
 def _model_to_dict(model):
-    return {
-        column.name: getattr(model, column.name)
-        for column in model.__table__.columns
-    }
+    return {column.name: getattr(model, column.name) for column in model.__table__.columns}
 
 
 def _safe_jsonable(value: Any) -> Any:
@@ -78,9 +77,7 @@ def _row_get(row: Dict[str, Any], aliases: List[str]):
     if not isinstance(row, dict):
         return None
 
-    normalized_map = {
-        _normalize_key(k): v for k, v in row.items()
-    }
+    normalized_map = {_normalize_key(k): v for k, v in row.items()}
 
     for alias in aliases:
         value = normalized_map.get(_normalize_key(alias))
@@ -91,59 +88,30 @@ def _row_get(row: Dict[str, Any], aliases: List[str]):
     return None
 
 
-def _is_company_row(row: Dict[str, Any]) -> bool:
-    company_url = _row_get(row, ["companyUrl", "Company Url"])
-    company_name = _row_get(row, ["companyName", "Company Name"])
-    company_id = _row_get(row, ["companyId", "Company Id"])
-    regular_company_url = _row_get(row, ["regularCompanyUrl", "Regular Company Url"])
-
-    # must have at least meaningful company identity
-    identity_score = sum(
-        1 for v in [company_url, company_name, company_id, regular_company_url] if v
-    )
-
-    if identity_score < 2:
-        return False
-
-    blob = " ".join(str(v) for v in row.values() if v is not None).lower()
-
-    noise_markers = [
-        "aws sdk for javascript",
-        "maintenance mode",
-        "end-of-support",
-        "trace-warnings",
-        "process finished successfully",
-        "number of results to scrape",
-        "this search has already been processed",
-        "[info_]",
-        "warning",
-        "exit code",
-    ]
-
-    if any(marker in blob for marker in noise_markers):
-        return False
-
-    return True
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
 
 
-def _normalize_company_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "company_url": _row_get(row, ["companyUrl", "Company Url"]),
-        "company_name": _row_get(row, ["companyName", "Company Name"]),
-        "description": _row_get(row, ["description", "Description"]),
-        "company_id": _row_get(row, ["companyId", "Company Id"]),
-        "regular_company_url": _row_get(row, ["regularCompanyUrl", "Regular Company Url"]),
-        "industry": _row_get(row, ["industry", "Industry"]),
-        "employees_count": _row_get(row, ["employeesCount", "Employees Count"]),
-        "employee_count_range": _row_get(row, ["employeeCountRange", "Employee Count Range"]),
-        "logo_url": _row_get(row, ["logoUrl", "Logo Url"]),
-        "is_hiring": _row_get(row, ["isHiring", "Is Hiring"]),
-        "query": _row_get(row, ["query", "Query"]),
-        "timestamp": _row_get(row, ["timestamp", "Timestamp"]),
-        "search_account_profile_id": _row_get(row, ["searchAccountProfileId", "Search Account Profile Id"]),
-        "search_account_profile_name": _row_get(row, ["searchAccountProfileName", "Search Account Profile Name"]),
-        "raw_data": {k: _safe_jsonable(v) for k, v in row.items()},
-    }
+def extract_domain(url):
+    try:
+        return urlparse(url).netloc.lower().strip()
+    except Exception:
+        return None
+
+
+def _fingerprint_company(item: Dict[str, Any]) -> str | None:
+    fingerprint = item.get("url") or item.get("linkedinUrl") or extract_domain(item.get("website"))
+
+    if not fingerprint:
+        fingerprint = item.get("name")
+
+    if not fingerprint:
+        return None
+
+    return str(fingerprint).strip().lower()
 
 
 def _normalize_google_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -208,254 +176,296 @@ def _build_export_rows(companies: List[Company]) -> List[Dict[str, Any]]:
     return rows
 
 
-# @app.on_event("startup")
-# def resume_pending_jobs():
-#     db = SessionLocal()
-#     try:
-#         pending = db.query(LeadRequest).filter(LeadRequest.status == "Running").all()
+def _update_request_state(db: Session, request: LeadRequest, **kwargs):
+    for key, value in kwargs.items():
+        setattr(request, key, value)
+    db.commit()
+    db.refresh(request)
 
-#         for job in pending:
-#             if not job.container_id:
-#                 job.status = "Failed"
-#                 job.phase = "failed"
-#                 job.progress = 100
-#                 db.commit()
-#                 continue
+    push_update(
+        request.id,
+        {
+            "type": "status",
+            "request_id": request.id,
+            "status": request.status,
+            "phase": request.phase,
+            "progress": request.progress,
+            "total_results": request.total_results,
+        },
+    )
 
-#             threading.Thread(
-#                 target=poll_search_and_store,
-#                 args=(job.id, str(job.container_id)),
-#                 daemon=True
-#             ).start()
-#     finally:
-#         db.close()
 
-from urllib.parse import urlparse
-
-def extract_domain(url):
-    try:
-        return urlparse(url).netloc
-    except:
-        return None
-        
-def run_pipeline(request_id, filters):
-    
-
+def run_pipeline(request_id: int, filters: Dict[str, Any]):
     db = SessionLocal()
-    
 
     try:
-        request = db.query(LeadRequest).get(request_id)
+        request = db.query(LeadRequest).filter_by(id=request_id).first()
+        if not request:
+            return
+
         db.query(Company).filter_by(request_id=request_id).delete()
         db.commit()
 
         queries = split_queries(filters)
+        if not queries:
+            _update_request_state(
+                db,
+                request,
+                status="Failed",
+                phase="failed",
+                progress=100,
+                total_results=0,
+            )
+            return
 
-        request.phase = "searching"
-        request.progress = 10
-        db.commit()
+        _update_request_state(db, request, status="Running", phase="searching", progress=10, total_results=0)
 
-        all_domains = set()
+        max_total_results = max(50, min(_safe_int(filters.get("max_results"), 1000), 3000))
+        max_workers = max(1, min(_safe_int(os.getenv("SALESNAV_MAX_WORKERS"), 4), len(queries)))
+        max_results_per_query = max(30, min(200, math.ceil(max_total_results / len(queries))))
 
-        def worker(search_url):
+        seen_fingerprints = set()
+        seen_lock = threading.Lock()
+        total_lock = threading.Lock()
+        stop_event = threading.Event()
+        total_inserted = 0
 
+        def flush_batch(local_db: Session, batch: List[Tuple[Company, Dict[str, Any]]]):
+            nonlocal total_inserted
+
+            if not batch:
+                return
+
+            local_db.add_all([company for company, _ in batch])
+            local_db.commit()
+
+            with total_lock:
+                for company, payload in batch:
+                    total_inserted += 1
+                    payload["id"] = company.id
+                    payload["total_results"] = total_inserted
+                    push_update(request_id, payload)
+
+                    if total_inserted >= max_total_results:
+                        stop_event.set()
+
+            batch.clear()
+
+        def worker(bucket_index: int, search_url: str) -> Dict[str, Any]:
             local_db = SessionLocal()
+            inserted_local = 0
+            batch: List[Tuple[Company, Dict[str, Any]]] = []
 
             try:
-                try:
-                    search_results = run_salesnav_search(search_url, 200)
-                except Exception as e:
-                    print("Search error:", e)
-                    return
+                if stop_event.is_set():
+                    return {"bucket": bucket_index, "inserted": 0, "error": None}
 
-                company_urls = [
-                    item.get("linkedinUrl") or item.get("companyLinkedinUrl")
-                    for item in search_results
-                    if item.get("linkedinUrl") or item.get("companyLinkedinUrl")
-                ]
+                search_results = run_salesnav_search(search_url, max_results=max_results_per_query)
 
-                #  LIMIT RESULTS → SAVE COST
-                company_urls = company_urls[:200]
+                company_urls = []
+                for item in search_results:
+                    linkedin_url = item.get("linkedinUrl") or item.get("companyLinkedinUrl")
+                    if linkedin_url and linkedin_url not in company_urls:
+                        company_urls.append(linkedin_url)
 
-                for i in range(0, len(company_urls), 50):
-                
-                    chunk = company_urls[i:i+50]
+                for i in range(0, len(company_urls), 25):
+                    if stop_event.is_set():
+                        break
+
+                    chunk = company_urls[i : i + 25]
 
                     try:
                         enriched = enrich_companies(chunk)
-                    except Exception as e:
-                        print("Enrich error:", e)
-                        continue
-                    
-                    for item in enriched:
-                    
-                        website = item.get("website")
-
-                        fingerprint = (
-                            item.get("url")
-                            or item.get("linkedinUrl")
-                            or extract_domain(website)
+                    except Exception as enrich_error:
+                        push_update(
+                            request_id,
+                            {
+                                "type": "warning",
+                                "message": f"Company enrichment chunk failed: {str(enrich_error)}",
+                                "bucket": bucket_index,
+                            },
                         )
+                        continue
 
-                        if not fingerprint or fingerprint in all_domains:
+                    for item in enriched:
+                        if stop_event.is_set():
+                            break
+
+                        fingerprint = _fingerprint_company(item)
+                        if not fingerprint:
                             continue
-                        
-                        all_domains.add(fingerprint)
 
+                        with seen_lock:
+                            if fingerprint in seen_fingerprints:
+                                continue
+                            seen_fingerprints.add(fingerprint)
+
+                        website = item.get("website") or extract_domain(item.get("url"))
                         company = Company(
                             request_id=request_id,
                             company_url=item.get("url"),
                             company_name=item.get("name"),
                             description=item.get("description"),
+                            company_id=item.get("companyId") or item.get("id"),
+                            regular_company_url=item.get("linkedinUrl") or item.get("url"),
                             industry=item.get("industry"),
-                            employees_count=item.get("employees"),
+                            employees_count=str(item.get("employees")) if item.get("employees") is not None else None,
                             logo_url=item.get("logo"),
-                            raw_data=item
+                            query=str(bucket_index + 1),
+                            raw_data={k: _safe_jsonable(v) for k, v in item.items()},
                         )
 
-                        local_db.add(company)
-                        local_db.commit()
+                        batch.append(
+                            (
+                                company,
+                                {
+                                    "type": "company",
+                                    "request_id": request_id,
+                                    "company_name": company.company_name,
+                                    "company_url": company.company_url,
+                                    "website": website,
+                                    "industry": company.industry,
+                                    "employees_count": company.employees_count,
+                                },
+                            )
+                        )
 
-                        push_update(request_id, {
-                            "name": company.company_name,
-                            "website": website
-                        })
+                        inserted_local += 1
 
+                        if len(batch) >= 20:
+                            flush_batch(local_db, batch)
+
+                flush_batch(local_db, batch)
+                return {"bucket": bucket_index, "inserted": inserted_local, "error": None}
+
+            except Exception as error:
+                local_db.rollback()
+                return {"bucket": bucket_index, "inserted": inserted_local, "error": str(error)}
             finally:
                 local_db.close()
-# def poll_search_and_store(request_id: int, container_id: str):
-#       db = SessionLocal()
 
-#       try:
-#                 request = db.query(LeadRequest).filter_by(id=request_id).first()
-#                 if not request:
-#             return
+        completed = 0
 
-#         request.phase = "searching"
-#         request.progress = 25
-#         db.commit()
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(worker, idx, query) for idx, query in enumerate(queries)]
 
-#         db.query(Company).filter_by(request_id=request_id).delete()
-#         db.commit()
+            for future in as_completed(futures):
+                completed += 1
+                outcome = future.result()
 
-#         attempts = 0
-#         max_attempts = 80
+                progress = min(95, 10 + int((completed / len(queries)) * 80))
+                request.progress = progress
+                request.phase = "processing"
+                request.total_results = total_inserted
 
-#         while attempts < max_attempts:
-#             try:
-#                 status_response = get_container_status(container_id)
-#                 status = str(status_response.get("status", "")).strip().lower()
-#             except Exception:
-#                 attempts += 1
-#                 time.sleep(30)
-#                 continue
+                if outcome.get("error"):
+                    push_update(
+                        request_id,
+                        {
+                            "type": "warning",
+                            "request_id": request_id,
+                            "message": f"Bucket {outcome['bucket'] + 1} error: {outcome['error']}",
+                        },
+                    )
 
-#             if status == "finished":
-#                 try:
-#                     rows = fetch_container_results(container_id)
-#                 except Exception:
-#                     request.status = "Failed"
-#                     request.phase = "failed"
-#                     request.progress = 100
-#                     db.commit()
-#                     return
+                db.commit()
 
-#                 request.phase = "processing"
-#                 request.progress = 70
-#                 db.commit()
+                push_update(
+                    request_id,
+                    {
+                        "type": "status",
+                        "request_id": request_id,
+                        "status": request.status,
+                        "phase": request.phase,
+                        "progress": request.progress,
+                        "total_results": request.total_results,
+                    },
+                )
 
-#                 seen = set()
-#                 inserted = 0
+        request.total_results = total_inserted
+        request.progress = 100
 
-#                 for row in rows:
-#                     if not isinstance(row, dict):
-#                         continue
+        if total_inserted > 0:
+            request.status = "Completed"
+            request.phase = "completed"
+        else:
+            request.status = "Failed"
+            request.phase = "failed"
 
-#                     if not _is_company_row(row):
-#                         continue
+        db.commit()
 
-#                     normalized = _normalize_company_row(row)
+        push_update(
+            request_id,
+            {
+                "type": "end",
+                "request_id": request_id,
+                "status": request.status,
+                "phase": request.phase,
+                "progress": request.progress,
+                "total_results": request.total_results,
+            },
+        )
 
-#                     fingerprint = (
-#                         normalized.get("company_id")
-#                         or normalized.get("company_url")
-#                         or normalized.get("regular_company_url")
-#                         or normalized.get("company_name")
-#                     )
+    except Exception as exc:
+        request = db.query(LeadRequest).filter_by(id=request_id).first()
 
-#                     if fingerprint:
-#                         fingerprint = str(fingerprint).strip().lower()
+        if request:
+            request.status = "Failed"
+            request.phase = "failed"
+            request.progress = 100
+            db.commit()
 
-#                     if fingerprint and fingerprint in seen:
-#                         continue
+            push_update(
+                request_id,
+                {
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": str(exc),
+                    "status": request.status,
+                    "phase": request.phase,
+                    "progress": request.progress,
+                    "total_results": request.total_results,
+                },
+            )
+    finally:
+        db.close()
 
-#                     company = Company(
-#                         request_id=request_id,
-#                         company_url=normalized.get("company_url"),
-#                         company_name=normalized.get("company_name"),
-#                         description=normalized.get("description"),
-#                         company_id=normalized.get("company_id"),
-#                         regular_company_url=normalized.get("regular_company_url"),
-#                         industry=normalized.get("industry"),
-#                         employees_count=normalized.get("employees_count"),
-#                         employee_count_range=normalized.get("employee_count_range"),
-#                         logo_url=normalized.get("logo_url"),
-#                         is_hiring=normalized.get("is_hiring"),
-#                         query=normalized.get("query"),
-#                         timestamp=normalized.get("timestamp"),
-#                         search_account_profile_id=normalized.get("search_account_profile_id"),
-#                         search_account_profile_name=normalized.get("search_account_profile_name"),
-#                         raw_data=normalized.get("raw_data"),
-#                     )
-
-#                     db.add(company)
-#                     inserted += 1
-
-#                     if fingerprint:
-#                         seen.add(fingerprint)
-
-#                 db.commit()
-
-#                 request.total_results = db.query(Company).filter_by(request_id=request_id).count()
-
-#                 if request.total_results > 0:
-#                     request.status = "Completed"
-#                     request.phase = "completed"
-#                 else:
-#                     request.status = "Failed"
-#                     request.phase = "failed"
-
-#                 request.progress = 100
-#                 db.commit()
-#                 return
-
-#             if status in {"error", "failed", "aborted"}:
-#                 request.status = "Failed"
-#                 request.phase = "failed"
-#                 request.progress = 100
-#                 db.commit()
-#                 return
-
-#             attempts += 1
-#             time.sleep(30)
-
-#         request.status = "Timeout"
-#         request.phase = "failed"
-#         request.progress = 100
-#         db.commit()
-
-#     finally:
-#         db.close()
 
 @app.get("/api/stream/{request_id}")
 def stream(request_id: int):
     return get_updates(request_id)
-    
+
+
+@app.get("/api/stream/{request_id}/events")
+def stream_events(request_id: int, request: Request):
+    subscriber_id = register_subscriber(request_id)
+
+    def event_generator():
+        try:
+            while True:
+                event = pop_subscriber(request_id, subscriber_id, timeout=15)
+                if event is None:
+                    yield ": keepalive\n\n"
+                    continue
+
+                yield f"data: {json.dumps(event)}\n\n"
+        except Empty:
+            yield ": keepalive\n\n"
+        finally:
+            remove_subscriber(request_id, subscriber_id)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+
 @app.post("/api/run-salesnav")
 def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-
     request = LeadRequest(
-        request_name=data.get("request_name"),
+        request_name=data.get("request_name") or "SalesNav Agent",
         status="Running",
         phase="starting",
         progress=5,
@@ -466,6 +476,18 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     db.add(request)
     db.commit()
     db.refresh(request)
+
+    push_update(
+        request.id,
+        {
+            "type": "status",
+            "request_id": request.id,
+            "status": request.status,
+            "phase": request.phase,
+            "progress": request.progress,
+            "total_results": request.total_results,
+        },
+    )
 
     background_tasks.add_task(run_pipeline, request.id, data)
 
