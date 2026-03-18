@@ -2,17 +2,23 @@ from apify_client import ApifyClient
 import os
 
 APIFY_TOKEN = os.getenv("APIFY_TOKEN")
+SALESNAV_ACTOR_ID = os.getenv(
+    "APIFY_SALESNAV_ACTOR_ID",
+    "pratikdani/sales-navigator-company-search-scraper-no-cookies",
+)
+COMPANY_ENRICH_ACTOR_ID = os.getenv(
+    "APIFY_COMPANY_ENRICH_ACTOR_ID",
+    "apify/linkedin-company-scraper",
+)
 
 client = ApifyClient(APIFY_TOKEN)
 
 
 #  STEP 1 → SALESNAV SEARCH
 def run_salesnav_search(search_url, max_results=500):
-
-    ACTOR_ID = "curious_coder/linkedin-sales-navigator-search-scraper"
-
-    run = client.actor(ACTOR_ID).call(
+    run = client.actor(SALESNAV_ACTOR_ID).call(
         run_input={
+            "url": search_url,
             "searchUrl": search_url,
             "maxResults": max_results
         }
@@ -24,10 +30,7 @@ def run_salesnav_search(search_url, max_results=500):
 
 #  STEP 2 → COMPANY DETAILS
 def enrich_companies(linkedin_urls):
-
-    ACTOR_ID = "apify/linkedin-company-scraper"
-
-    run = client.actor(ACTOR_ID).call(
+    run = client.actor(COMPANY_ENRICH_ACTOR_ID).call(
         run_input={
             "startUrls": [{"url": url} for url in linkedin_urls]
         }
