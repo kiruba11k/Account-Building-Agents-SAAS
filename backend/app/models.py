@@ -12,6 +12,7 @@ class LeadRequest(Base):
     progress = Column(Integer)
     container_id = Column(String)
     total_results = Column(Integer, default=0)
+    agent_type = Column(String, default="salesnav")
     filters = Column(JSON)
 
 

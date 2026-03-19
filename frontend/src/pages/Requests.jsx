@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import API from "../api";
 import StatusBadge from "../components/StatusBadge";
+import { Link } from "react-router-dom";
 
 export default function Requests() {
   const [data, setData] = useState([]);
@@ -24,6 +25,7 @@ export default function Requests() {
           <tr className="border-b text-gray-500 text-sm">
             <th className="pb-3">Name</th>
             <th>Status</th>
+            <th>Agent</th>
             <th>Total</th>
             <th></th>
           </tr>
@@ -34,16 +36,22 @@ export default function Requests() {
             <tr key={r.id} className="border-b">
               <td className="py-4">{r.request_name}</td>
               <td><StatusBadge status={r.status} /></td>
+              <td className="text-sm capitalize text-gray-600">{r.agent_type || "salesnav"}</td>
               <td>{r.total_results}</td>
               <td>
-                {r.status === "Completed" && (
-                  <a
-                    href={`${process.env.REACT_APP_API_URL}/api/download/${r.id}`}
-                    className="text-blue-600 hover:underline"
-                  >
-                    Download CSV
-                  </a>
-                )}
+                <div className="flex items-center gap-3">
+                  <Link to={`/results/${r.id}`} className="text-blue-600 hover:underline">
+                    Open Results
+                  </Link>
+                  {r.status === "Completed" && (
+                    <a
+                      href={`${API.defaults.baseURL}/api/download/${r.id}`}
+                      className="text-green-700 hover:underline"
+                    >
+                      Download CSV
+                    </a>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
