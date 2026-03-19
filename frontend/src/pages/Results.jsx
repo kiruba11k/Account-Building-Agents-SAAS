@@ -7,14 +7,17 @@ const AGENT_META = {
   salesnav: {
     title: "LinkedIn Sales Nav Scraper Results",
     accent: "from-cyan-400 via-blue-500 to-violet-500",
+    description: "Live account discovery stream from LinkedIn Sales Navigator + enrichment.",
   },
   google: {
     title: "Google Scraper Lead Gen Results",
     accent: "from-emerald-400 via-teal-500 to-cyan-500",
+    description: "Live places scraping and lead-gen enrichment output from Google discovery flow.",
   },
   enrichment: {
     title: "Firmographic Enricher Results",
     accent: "from-fuchsia-500 via-violet-500 to-indigo-500",
+    description: "Live firmographic enrichment for submitted LinkedIn company URLs.",
   },
 };
 
@@ -51,9 +54,20 @@ export default function Results() {
     return base.endsWith("/") ? base.slice(0, -1) : base;
   }, []);
 
+  const tableRows = useMemo(() => {
+    return results.map((row) => {
+      if (!row?.raw_data || typeof row.raw_data !== "object") {
+        return row;
+      }
+
+      const { raw_data: rawData, ...base } = row;
+      return { ...base, ...rawData };
+    });
+  }, [results]);
+
   const orderedColumns = useMemo(() => {
     const map = new Map();
-    results.forEach((row) => {
+    tableRows.forEach((row) => {
       Object.keys(row || {}).forEach((key) => {
         if (!["id", "request_id"].includes(key) && !map.has(key)) {
           map.set(key, key);
@@ -62,12 +76,22 @@ export default function Results() {
     });
 
     return Array.from(map.keys());
-  }, [results]);
+  }, [tableRows]);
 
   const agentMeta = AGENT_META[status.agent_type] || {
     title: "Agent Results",
     accent: "from-cyan-400 via-blue-500 to-violet-500",
+    description: "Live request output from background processing.",
   };
+
+  const filterEntries = useMemo(() => {
+    const filters = status?.filters;
+    if (!filters || typeof filters !== "object") return [];
+
+    return Object.entries(filters)
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+      .slice(0, 18);
+  }, [status]);
 
   useEffect(() => {
     setPage(1);
@@ -126,6 +150,9 @@ export default function Results() {
 
         if (payload.type === "status" || payload.type === "end") {
           setStatus((prev) => ({ ...prev, ...payload }));
+          if (typeof payload.total_results === "number") {
+            setTotal((prevTotal) => Math.max(prevTotal, payload.total_results));
+          }
           return;
         }
 
@@ -156,6 +183,7 @@ export default function Results() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold text-white">{agentMeta.title}</h2>
+            <p className="mt-2 text-sm text-slate-200/90">{agentMeta.description}</p>
             <p className="mt-2 text-sm text-slate-200/90">
               Request #{id} • Status: <b>{status.phase || "starting"}</b> • Stream: <b>{streamState}</b>
             </p>
@@ -186,6 +214,21 @@ export default function Results() {
         </div>
       </div>
 
+      <div className="glass-panel rounded-3xl p-5">
+        <h3 className="text-base font-semibold text-white">Submitted Input Snapshot</h3>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {filterEntries.length > 0 ? (
+            filterEntries.map(([key, value]) => (
+              <span key={key} className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-slate-100">
+                <b>{key}</b>: {valueToText(value)}
+              </span>
+            ))
+          ) : (
+            <span className="text-sm text-slate-300">No input filters captured for this request.</span>
+          )}
+        </div>
+      </div>
+
       <div className="glass-panel overflow-hidden rounded-3xl">
         <div className="overflow-x-auto">
           <table className="min-w-full table-auto border-collapse text-left text-sm text-slate-100">
@@ -199,7 +242,7 @@ export default function Results() {
               </tr>
             </thead>
             <tbody>
-              {results.map((row, rowIndex) => (
+              {tableRows.map((row, rowIndex) => (
                 <tr key={row.id || `${fingerprint(row)}-${rowIndex}`} className="border-t border-white/10">
                   {orderedColumns.map((col) => (
                     <td key={`${rowIndex}-${col}`} className="max-w-[300px] px-4 py-3 align-top text-slate-200">
@@ -212,7 +255,7 @@ export default function Results() {
           </table>
         </div>
 
-        {!results.length && (
+        {!tableRows.length && (
           <div className="p-6 text-sm text-slate-300">No rows yet. This page will update live while the background agent keeps running.</div>
         )}
       </div>

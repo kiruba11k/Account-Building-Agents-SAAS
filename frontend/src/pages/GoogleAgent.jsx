@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import API from "../api";
 import MultiValueInput from "../components/MultiValueInput";
 import {
-  clearGoogleActiveRequest,
   getGoogleActiveRequest,
   getGoogleDraft,
+  markSalesNavRequestFinal,
   rememberGoogleActiveRequest,
   saveGoogleDraft,
 } from "../utils/sessionMemory";
@@ -48,7 +48,7 @@ export default function GoogleAgent() {
       API.get(`/api/request/${active.request_id}`)
         .then((res) => {
           if (["Completed", "Failed", "Timeout"].includes(res?.data?.status)) {
-            clearGoogleActiveRequest();
+            markSalesNavRequestFinal(active.request_id, res.data.status);
             setActiveRequest(null);
           }
         })

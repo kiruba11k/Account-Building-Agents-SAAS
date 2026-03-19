@@ -7,8 +7,17 @@ export default function Requests() {
   const [data, setData] = useState([]);
 
   useEffect(() => {
+    const load = () => {
+      API.get("/api/requests").then((res) => {
+        const ordered = [...(res.data || [])].sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+        setData(ordered);
+      });
+    };
+
+    load();
+
     const interval = setInterval(() => {
-      API.get("/api/requests").then(res => setData(res.data));
+      load();
     }, 5000);
 
     return () => clearInterval(interval);
