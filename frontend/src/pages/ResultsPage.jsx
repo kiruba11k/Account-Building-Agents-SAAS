@@ -12,6 +12,23 @@ export default function ResultsPage({ requestId }) {
 
   const limit = 50;
 
+  const displayRows = results.map((row) => {
+    if (!row?.raw_data || typeof row.raw_data !== "object") return row;
+    const { raw_data: rawData, ...base } = row;
+    return { ...base, ...rawData };
+  });
+
+  const columns = Array.from(
+    displayRows.reduce((set, row) => {
+      Object.keys(row || {}).forEach((key) => {
+        if (!["id", "request_id"].includes(key)) {
+          set.add(key);
+        }
+      });
+      return set;
+    }, new Set())
+  );
+
   // ---------------------------
   // Load request status
   // ---------------------------
@@ -79,9 +96,7 @@ export default function ResultsPage({ requestId }) {
   return (
     <div className="p-8">
 
-      <h1 className="text-2xl font-bold mb-6">
-        Lead Results
-      </h1>
+      <h1 className="text-2xl font-bold mb-6">Lead Results</h1>
 
       {/* Progress Bar */}
 
@@ -117,36 +132,23 @@ export default function ResultsPage({ requestId }) {
         <thead className="bg-gray-100">
 
           <tr>
-            <th className="p-2 border">Company</th>
-            <th className="p-2 border">Domain</th>
-            <th className="p-2 border">Industry</th>
-            <th className="p-2 border">Employees</th>
-            <th className="p-2 border">Revenue</th>
-            <th className="p-2 border">Location</th>
-            <th className="p-2 border">Confidence</th>
+            {columns.map((col) => (
+              <th key={col} className="p-2 border">{col}</th>
+            ))}
           </tr>
 
         </thead>
 
         <tbody>
 
-          {results.map((r, i) => (
+          {displayRows.map((r, i) => (
 
             <tr key={i} className="text-sm">
-
-              <td className="border p-2">{r.name}</td>
-
-              <td className="border p-2">{r.domain}</td>
-
-              <td className="border p-2">{r.industry}</td>
-
-              <td className="border p-2">{r.headcount}</td>
-
-              <td className="border p-2">{r.revenue}</td>
-
-              <td className="border p-2">{r.headquarters}</td>
-
-              <td className="border p-2">{r.confidence_score}</td>
+              {columns.map((col) => (
+                <td key={`${i}-${col}`} className="border p-2">
+                  {r[col] === null || r[col] === undefined || r[col] === "" ? "-" : String(r[col])}
+                </td>
+              ))}
 
             </tr>
 

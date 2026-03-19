@@ -1,5 +1,4 @@
-const SALESNAV_KEY = "aba_active_salesnav_requests";
-const GOOGLE_ACTIVE_KEY = "aba_active_google_request";
+const ACTIVE_REQUESTS_KEY = "aba_active_agent_requests";
 const GOOGLE_DRAFT_KEY = "aba_google_agent_draft";
 
 function readLocalStore(key, fallback = []) {
@@ -31,34 +30,34 @@ function writeSessionStore(key, value) {
   sessionStorage.setItem(key, JSON.stringify(value));
 }
 
-export function rememberSalesNavRequest(requestId) {
+function rememberActiveRequest(requestId, agentType) {
   const id = String(requestId);
-  const rows = readLocalStore(SALESNAV_KEY, []).filter((row) => String(row.request_id) !== id);
+  const rows = readLocalStore(ACTIVE_REQUESTS_KEY, []).filter((row) => String(row.request_id) !== id);
 
   rows.unshift({
     request_id: id,
+    agent_type: agentType,
     started_at: new Date().toISOString(),
     status: "Running",
   });
 
-  writeLocalStore(SALESNAV_KEY, rows.slice(0, 20));
+  writeLocalStore(ACTIVE_REQUESTS_KEY, rows.slice(0, 50));
+}
+
+export function rememberSalesNavRequest(requestId) {
+  rememberActiveRequest(requestId, "salesnav");
 }
 
 export function markSalesNavRequestFinal(requestId, status) {
   const id = String(requestId);
-  const rows = readLocalStore(SALESNAV_KEY, []).map((row) =>
+  const rows = readLocalStore(ACTIVE_REQUESTS_KEY, []).map((row) =>
     String(row.request_id) === id ? { ...row, status: status || row.status } : row
   );
-  writeLocalStore(SALESNAV_KEY, rows);
-
-  const googleActive = getGoogleActiveRequest();
-  if (googleActive?.request_id === id && ["Completed", "Failed", "Timeout"].includes(status)) {
-    clearGoogleActiveRequest();
-  }
+  writeLocalStore(ACTIVE_REQUESTS_KEY, rows);
 }
 
 export function getActiveSalesNavRequests() {
-  return readLocalStore(SALESNAV_KEY, []).filter((row) => row.status === "Running");
+  return readLocalStore(ACTIVE_REQUESTS_KEY, []).filter((row) => row.status === "Running" && row.agent_type === "salesnav");
 }
 
 export function saveGoogleDraft(draft) {
@@ -70,17 +69,28 @@ export function getGoogleDraft() {
 }
 
 export function rememberGoogleActiveRequest(requestId) {
-  writeSessionStore(GOOGLE_ACTIVE_KEY, {
-    request_id: String(requestId),
-    started_at: new Date().toISOString(),
-    status: "Running",
-  });
+  rememberActiveRequest(requestId, "google");
 }
 
 export function getGoogleActiveRequest() {
-  return readSessionStore(GOOGLE_ACTIVE_KEY, null);
+  return readLocalStore(ACTIVE_REQUESTS_KEY, []).find(
+    (row) => row.status === "Running" && row.agent_type === "google"
+  ) || null;
 }
 
 export function clearGoogleActiveRequest() {
-  sessionStorage.removeItem(GOOGLE_ACTIVE_KEY);
+  const rows = readLocalStore(ACTIVE_REQUESTS_KEY, []).map((row) =>
+    row.agent_type === "google" && row.status === "Running" ? { ...row, status: "Stopped" } : row
+  );
+  writeLocalStore(ACTIVE_REQUESTS_KEY, rows);
+}
+
+export function rememberEnrichmentActiveRequest(requestId) {
+  rememberActiveRequest(requestId, "enrichment");
+}
+
+export function getEnrichmentActiveRequest() {
+  return readLocalStore(ACTIVE_REQUESTS_KEY, []).find(
+    (row) => row.status === "Running" && row.agent_type === "enrichment"
+  ) || null;
 }

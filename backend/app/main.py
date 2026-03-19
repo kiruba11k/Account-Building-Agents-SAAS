@@ -152,27 +152,8 @@ def _build_export_rows(companies: List[Company]) -> List[Dict[str, Any]]:
     rows = []
 
     for company in companies:
-        base = _model_to_dict(company)
-        raw_data = base.pop("raw_data", None) or {}
-
-        row = {
-            "id": base.get("id"),
-            "request_id": base.get("request_id"),
-            "company_url": base.get("company_url"),
-            "company_name": base.get("company_name"),
-            "description": base.get("description"),
-            "company_id": base.get("company_id"),
-            "regular_company_url": base.get("regular_company_url"),
-            "industry": base.get("industry"),
-            "employees_count": base.get("employees_count"),
-            "employee_count_range": base.get("employee_count_range"),
-            "logo_url": base.get("logo_url"),
-            "is_hiring": base.get("is_hiring"),
-            "query": base.get("query"),
-            "timestamp": base.get("timestamp"),
-            "search_account_profile_id": base.get("search_account_profile_id"),
-            "search_account_profile_name": base.get("search_account_profile_name"),
-        }
+        row = _model_to_dict(company)
+        raw_data = row.pop("raw_data", None) or {}
 
         if isinstance(raw_data, str):
             try:
@@ -520,6 +501,19 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
             )
             db.add(company)
             inserted += 1
+            db.flush()
+
+            payload = _model_to_dict(company)
+            payload.pop("raw_data", None)
+            payload.update(
+                {
+                    "type": "company",
+                    "request_id": request.id,
+                    "agent_type": request.agent_type,
+                    "total_results": inserted,
+                }
+            )
+            push_update(request.id, payload)
 
             if inserted % 25 == 0:
                 db.commit()
@@ -638,6 +632,19 @@ def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any
             )
             db.add(company)
             inserted += 1
+            db.flush()
+
+            payload = _model_to_dict(company)
+            payload.pop("raw_data", None)
+            payload.update(
+                {
+                    "type": "company",
+                    "request_id": request.id,
+                    "agent_type": request.agent_type,
+                    "total_results": inserted,
+                }
+            )
+            push_update(request.id, payload)
 
             if inserted % 15 == 0:
                 progress = min(95, 10 + int((inserted / max(len(urls), 1)) * 80))
@@ -649,19 +656,6 @@ def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any
                     progress=progress,
                     total_results=inserted,
                 )
-                push_update(
-                    request.id,
-                    {
-                        "type": "company",
-                        "request_id": request.id,
-                        "agent_type": request.agent_type,
-                        "company_name": company.company_name,
-                        "company_url": company.company_url,
-                        "industry": company.industry,
-                        "employees_count": company.employees_count,
-                    },
-                )
-
         db.commit()
         _update_request_state(
             db,
