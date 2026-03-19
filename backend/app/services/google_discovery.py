@@ -1,9 +1,9 @@
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
-import requests
+from apify_client import ApifyClient
 
-APIFY_BASE = "https://api.apify.com/v2/acts/compass~crawler-google-places"
+DEFAULT_GOOGLE_ACTOR = "compass/crawler-google-places"
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -18,6 +18,18 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+def _to_int(value: Any, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
+
+
+def _normalize_actor_id(actor_id: str) -> str:
+    raw = (actor_id or DEFAULT_GOOGLE_ACTOR).strip()
+    return raw.replace("~", "/")
+
+
 def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     search_terms = payload.get("search_terms") or payload.get("searchStringsArray") or []
     if isinstance(search_terms, str):
@@ -26,15 +38,13 @@ def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     actor_input: Dict[str, Any] = {
         "searchStringsArray": search_terms,
         "locationQuery": str(payload.get("location") or payload.get("locationQuery") or "").strip(),
-        "maxCrawledPlacesPerSearch": int(payload.get("max_places") or payload.get("maxCrawledPlacesPerSearch") or 50),
+        "maxCrawledPlacesPerSearch": _to_int(payload.get("max_places") or payload.get("maxCrawledPlacesPerSearch"), 50),
         "language": payload.get("language") or "English",
-        # Good GTM defaults: scrape details + web results + closed place filtering.
         "scrapePlaceDetailPage": _to_bool(payload.get("scrapePlaceDetailPage"), True),
         "includeWebResults": _to_bool(payload.get("includeWebResults"), True),
         "skipClosedPlaces": _to_bool(payload.get("skipClosedPlaces"), True),
-        # Useful for company enrichment (enabled if website exists).
         "scrapeContacts": _to_bool(payload.get("scrapeContacts") or payload.get("company_contacts_enrichment"), True),
-        "maxLeadsPerPlace": int(payload.get("maxLeadsPerPlace") or payload.get("max_leads_per_place") or 0),
+        "maxLeadsPerPlace": _to_int(payload.get("maxLeadsPerPlace") or payload.get("max_leads_per_place"), 0),
     }
 
     categories = payload.get("categories") or payload.get("placeCategories")
@@ -50,23 +60,32 @@ def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     return actor_input
 
 
-def run_google_places_actor(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    token = os.getenv("APIFY_API_TOKEN", "").strip()
+def run_google_places_actor(payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    token = os.getenv("APIFY_API_TOKEN", "").strip() or os.getenv("APIFY_TOKEN", "").strip()
     if not token:
-        raise ValueError("Missing APIFY_API_TOKEN environment variable")
+        raise ValueError("Missing APIFY_API_TOKEN (or APIFY_TOKEN) environment variable")
 
+    actor_id = _normalize_actor_id(os.getenv("APIFY_GOOGLE_PLACES_ACTOR_ID", DEFAULT_GOOGLE_ACTOR))
     actor_input = build_google_places_input(payload)
 
-    response = requests.post(
-        f"{APIFY_BASE}/run-sync-get-dataset-items",
-        params={"token": token},
-        json=actor_input,
-        timeout=300,
-    )
-    response.raise_for_status()
+    client = ApifyClient(token)
+    actor_client = client.actor(actor_id)
 
-    data = response.json()
-    if isinstance(data, list):
-        return data
+    run = actor_client.call(run_input=actor_input)
+    dataset_id = run.get("defaultDatasetId")
+    if not dataset_id:
+        return [], {
+            "actor": actor_id,
+            "run_id": run.get("id"),
+            "dataset_id": None,
+            "endpoint": "actor.call + dataset.iterate_items",
+        }
 
-    return []
+    rows = list(client.dataset(dataset_id).iterate_items())
+
+    return rows, {
+        "actor": actor_id,
+        "run_id": run.get("id"),
+        "dataset_id": dataset_id,
+        "endpoint": "actor.call + dataset.iterate_items",
+    }
