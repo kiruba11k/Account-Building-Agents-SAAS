@@ -12,6 +12,7 @@ import pandas as pd
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
@@ -29,6 +30,18 @@ from app.services.stream_manager import (
 from app.services.taxonomy_service import get_linkedin_taxonomy
 
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_schema():
+    inspector = inspect(engine)
+    columns = {col["name"] for col in inspector.get_columns("lead_requests")}
+    if "agent_type" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE lead_requests ADD COLUMN agent_type VARCHAR"))
+            conn.execute(text("UPDATE lead_requests SET agent_type = 'salesnav' WHERE agent_type IS NULL"))
+
+
+_ensure_schema()
 
 app = FastAPI(title="Account Building Agents SaaS Backend")
 
@@ -188,6 +201,7 @@ def _update_request_state(db: Session, request: LeadRequest, **kwargs):
         {
             "type": "status",
             "request_id": request.id,
+            "agent_type": request.agent_type,
             "status": request.status,
             "phase": request.phase,
             "progress": request.progress,
@@ -567,6 +581,131 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
     finally:
         db.close()
 
+
+def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any]):
+    db = SessionLocal()
+
+    try:
+        request = db.query(LeadRequest).filter_by(id=request_id).first()
+        if not request:
+            return
+
+        _update_request_state(
+            db,
+            request,
+            status="Running",
+            phase="enriching",
+            progress=10,
+            total_results=0,
+        )
+
+        db.query(Company).filter_by(request_id=request_id).delete()
+        db.commit()
+
+        urls = filters.get("linkedin_urls") or []
+        if isinstance(urls, str):
+            urls = [line.strip() for line in urls.splitlines() if line.strip()]
+
+        if not isinstance(urls, list) or not urls:
+            _update_request_state(
+                db,
+                request,
+                status="Failed",
+                phase="failed",
+                progress=100,
+                total_results=0,
+            )
+            return
+
+        enriched = enrich_companies(urls)
+        inserted = 0
+
+        for row in enriched:
+            if not isinstance(row, dict):
+                continue
+
+            company = Company(
+                request_id=request.id,
+                company_url=row.get("url"),
+                company_name=row.get("name"),
+                description=row.get("description"),
+                company_id=row.get("companyId") or row.get("id"),
+                regular_company_url=row.get("linkedinUrl") or row.get("url"),
+                industry=row.get("industry"),
+                employees_count=str(row.get("employees")) if row.get("employees") is not None else None,
+                logo_url=row.get("logo"),
+                raw_data={k: _safe_jsonable(v) for k, v in row.items()},
+            )
+            db.add(company)
+            inserted += 1
+
+            if inserted % 15 == 0:
+                progress = min(95, 10 + int((inserted / max(len(urls), 1)) * 80))
+                _update_request_state(
+                    db,
+                    request,
+                    status="Running",
+                    phase="enriching",
+                    progress=progress,
+                    total_results=inserted,
+                )
+                push_update(
+                    request.id,
+                    {
+                        "type": "company",
+                        "request_id": request.id,
+                        "agent_type": request.agent_type,
+                        "company_name": company.company_name,
+                        "company_url": company.company_url,
+                        "industry": company.industry,
+                        "employees_count": company.employees_count,
+                    },
+                )
+
+        db.commit()
+        _update_request_state(
+            db,
+            request,
+            status="Completed",
+            phase="completed",
+            progress=100,
+            total_results=inserted,
+        )
+        push_update(
+            request.id,
+            {
+                "type": "end",
+                "request_id": request.id,
+                "agent_type": request.agent_type,
+                "status": request.status,
+                "phase": request.phase,
+                "progress": request.progress,
+                "total_results": request.total_results,
+            },
+        )
+    except Exception as exc:
+        request = db.query(LeadRequest).filter_by(id=request_id).first()
+        if request:
+            request.status = "Failed"
+            request.phase = "failed"
+            request.progress = 100
+            db.commit()
+            push_update(
+                request_id,
+                {
+                    "type": "error",
+                    "request_id": request_id,
+                    "agent_type": request.agent_type,
+                    "message": str(exc),
+                    "status": request.status,
+                    "phase": request.phase,
+                    "progress": request.progress,
+                    "total_results": request.total_results,
+                },
+            )
+    finally:
+        db.close()
+
 @app.get("/api/stream/{request_id}")
 def stream(request_id: int):
     return get_updates(request_id)
@@ -606,6 +745,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
         phase="starting",
         progress=5,
         total_results=0,
+        agent_type="salesnav",
         filters=data,
     )
 
@@ -618,6 +758,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
         {
             "type": "status",
             "request_id": request.id,
+            "agent_type": request.agent_type,
             "status": request.status,
             "phase": request.phase,
             "progress": request.progress,
@@ -643,6 +784,7 @@ def run_google_discovery(data: dict, background_tasks: BackgroundTasks, db: Sess
         phase="starting",
         progress=5,
         total_results=0,
+        agent_type="google",
         filters=data,
     )
 
@@ -655,6 +797,7 @@ def run_google_discovery(data: dict, background_tasks: BackgroundTasks, db: Sess
         {
             "type": "status",
             "request_id": request.id,
+            "agent_type": request.agent_type,
             "status": request.status,
             "phase": request.phase,
             "progress": request.progress,
@@ -666,10 +809,44 @@ def run_google_discovery(data: dict, background_tasks: BackgroundTasks, db: Sess
 
     return {
         "request_id": request.id,
+        "agent_type": request.agent_type,
         "status": request.status,
         "phase": request.phase,
         "message": "Google scraper queued. Processing in background.",
     }
+
+
+@app.post("/api/run-firmographic-enricher")
+def run_firmographic_enricher(data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    request = LeadRequest(
+        request_name=data.get("request_name") or "Firmographic Enricher",
+        status="Running",
+        phase="starting",
+        progress=5,
+        total_results=0,
+        agent_type="enrichment",
+        filters=data,
+    )
+
+    db.add(request)
+    db.commit()
+    db.refresh(request)
+
+    push_update(
+        request.id,
+        {
+            "type": "status",
+            "request_id": request.id,
+            "agent_type": request.agent_type,
+            "status": request.status,
+            "phase": request.phase,
+            "progress": request.progress,
+            "total_results": request.total_results,
+        },
+    )
+
+    background_tasks.add_task(run_firmographic_enrichment_pipeline, request.id, data)
+    return {"request_id": request.id, "agent_type": request.agent_type}
 
 
 @app.get("/api/request/{request_id}")
@@ -682,6 +859,7 @@ def get_request_status(request_id: int, db: Session = Depends(get_db)):
     return {
         "request_id": request.id,
         "request_name": request.request_name,
+        "agent_type": request.agent_type or "salesnav",
         "status": request.status,
         "phase": request.phase,
         "progress": request.progress,
@@ -710,7 +888,12 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
 @app.get("/api/requests")
 def get_requests(db: Session = Depends(get_db)):
     rows = db.query(LeadRequest).all()
-    return [_model_to_dict(row) for row in rows]
+    payload = []
+    for row in rows:
+        item = _model_to_dict(row)
+        item["agent_type"] = item.get("agent_type") or "salesnav"
+        payload.append(item)
+    return payload
 
 
 @app.get("/api/download/{request_id}")
