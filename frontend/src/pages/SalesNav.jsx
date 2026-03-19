@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import MultiValueInput from "../components/MultiValueInput";
+import MultiSelectDropdown from "../components/MultiSelectDropdown";
 import API from "../api";
 import { Link, useNavigate } from "react-router-dom";
 import { getActiveSalesNavRequests, rememberSalesNavRequest } from "../utils/sessionMemory";
@@ -8,6 +9,12 @@ export default function SalesNav() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [activeRequest, setActiveRequest] = useState(null);
+  const [taxonomyOptions, setTaxonomyOptions] = useState({
+    countries: [],
+    industries: [],
+    company_sizes: [],
+    revenue_ranges: [],
+  });
 
   const [countries, setCountries] = useState([]);
   const [industriesInclude, setIndustriesInclude] = useState([]);
@@ -46,6 +53,34 @@ export default function SalesNav() {
     if (active.length > 0) {
       setActiveRequest(active[0]);
     }
+
+    const loadTaxonomy = async () => {
+      const mapTaxonomyResponse = (data) => ({
+        countries: data?.countries || [],
+        industries: data?.industries || [],
+        company_sizes: data?.company_sizes || [],
+        revenue_ranges: data?.revenue_ranges || [],
+      });
+
+      try {
+        const res = await API.get("/api/linkedin-taxonomy");
+        setTaxonomyOptions(mapTaxonomyResponse(res?.data));
+      } catch {
+        try {
+          const res = await API.get("/linkedin-taxonomy");
+          setTaxonomyOptions(mapTaxonomyResponse(res?.data));
+        } catch {
+          setTaxonomyOptions({
+            countries: [],
+            industries: [],
+            company_sizes: [],
+            revenue_ranges: [],
+          });
+        }
+      }
+    };
+
+    loadTaxonomy();
   }, []);
 
   const launchAgent = async () => {
@@ -72,6 +107,11 @@ export default function SalesNav() {
     setLoading(false);
   };
 
+  const dropdownClassName =
+    "w-full appearance-none rounded-xl border border-cyan-300/35 bg-slate-900/80 px-3 py-2.5 text-slate-100 shadow-[0_0_0_1px_rgba(34,211,238,0.05)] transition focus:border-cyan-300/80 focus:outline-none focus:ring-2 focus:ring-cyan-400/30";
+  const inputClassName =
+    "w-full rounded-xl border border-cyan-300/25 bg-slate-900/70 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-400/20";
+
   return (
     <div className="grid gap-7 lg:grid-cols-[400px_1fr]">
       <div className="glass-panel card-hover sticky top-6 h-fit rounded-3xl p-6">
@@ -94,35 +134,187 @@ export default function SalesNav() {
             className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
           />
 
-          <MultiValueInput label="Countries" values={countries} setValues={setCountries} />
-          <MultiValueInput
-            label="Include Industries"
-            values={industriesInclude}
-            setValues={setIndustriesInclude}
-          />
-          <MultiValueInput
-            label="Exclude Industries"
-            values={industriesExclude}
-            setValues={setIndustriesExclude}
-          />
-
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              name="employee_min"
-              value={formData.employee_min}
-              onChange={handleChange}
-              placeholder="Employee Min"
-              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+          {taxonomyOptions.countries.length > 0 ? (
+            <MultiSelectDropdown
+              label="Countries"
+              values={countries}
+              setValues={setCountries}
+              options={taxonomyOptions.countries}
+              placeholder="Type to filter countries"
             />
+          ) : (
+            <MultiValueInput label="Countries" values={countries} setValues={setCountries} />
+          )}
 
-            <input
-              name="employee_max"
-              value={formData.employee_max}
-              onChange={handleChange}
-              placeholder="Employee Max"
-              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+          {taxonomyOptions.industries.length > 0 ? (
+            <MultiSelectDropdown
+              label="Include Industries"
+              values={industriesInclude}
+              setValues={setIndustriesInclude}
+              options={taxonomyOptions.industries}
+              placeholder="Type to filter industries"
             />
-          </div>
+          ) : (
+            <MultiValueInput
+              label="Include Industries"
+              values={industriesInclude}
+              setValues={setIndustriesInclude}
+            />
+          )}
+
+          {taxonomyOptions.industries.length > 0 ? (
+            <MultiSelectDropdown
+              label="Exclude Industries"
+              values={industriesExclude}
+              setValues={setIndustriesExclude}
+              options={taxonomyOptions.industries}
+              placeholder="Type to filter industries"
+            />
+          ) : (
+            <MultiValueInput
+              label="Exclude Industries"
+              values={industriesExclude}
+              setValues={setIndustriesExclude}
+            />
+          )}
+
+          {taxonomyOptions.company_sizes.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Employee Min
+                </label>
+                <select
+                  name="employee_min"
+                  value={formData.employee_min}
+                  onChange={handleChange}
+                  className={dropdownClassName}
+                >
+                  <option value="">Select minimum</option>
+                  {taxonomyOptions.company_sizes.map((size) => (
+                    <option key={`employee-min-${size}`} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Employee Max
+                </label>
+                <select
+                  name="employee_max"
+                  value={formData.employee_max}
+                  onChange={handleChange}
+                  className={dropdownClassName}
+                >
+                  <option value="">Select maximum</option>
+                  {taxonomyOptions.company_sizes.map((size) => (
+                    <option key={`employee-max-${size}`} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Employee Min
+                </label>
+                <input
+                  name="employee_min"
+                  value={formData.employee_min}
+                  onChange={handleChange}
+                  placeholder="Employee Min"
+                  className={inputClassName}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Employee Max
+                </label>
+                <input
+                  name="employee_max"
+                  value={formData.employee_max}
+                  onChange={handleChange}
+                  placeholder="Employee Max"
+                  className={inputClassName}
+                />
+              </div>
+            </div>
+          )}
+
+          {taxonomyOptions.revenue_ranges.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Revenue Min
+                </label>
+                <select
+                  name="revenue_min_usd"
+                  value={formData.revenue_min_usd}
+                  onChange={handleChange}
+                  className={dropdownClassName}
+                >
+                  <option value="">Select minimum</option>
+                  {taxonomyOptions.revenue_ranges.map((range) => (
+                    <option key={`revenue-min-${range}`} value={range}>
+                      {range}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Revenue Max
+                </label>
+                <select
+                  name="revenue_max_usd"
+                  value={formData.revenue_max_usd}
+                  onChange={handleChange}
+                  className={dropdownClassName}
+                >
+                  <option value="">Select maximum</option>
+                  {taxonomyOptions.revenue_ranges.map((range) => (
+                    <option key={`revenue-max-${range}`} value={range}>
+                      {range}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Revenue Min
+                </label>
+                <input
+                  name="revenue_min_usd"
+                  value={formData.revenue_min_usd}
+                  onChange={handleChange}
+                  placeholder="Revenue Min"
+                  className={inputClassName}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
+                  Revenue Max
+                </label>
+                <input
+                  name="revenue_max_usd"
+                  value={formData.revenue_max_usd}
+                  onChange={handleChange}
+                  placeholder="Revenue Max"
+                  className={inputClassName}
+                />
+              </div>
+            </div>
+          )}
 
           <MultiValueInput
             label="Include Keywords"
