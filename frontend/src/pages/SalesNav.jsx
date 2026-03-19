@@ -55,28 +55,21 @@ export default function SalesNav() {
     }
 
     const loadTaxonomy = async () => {
-      const mapTaxonomyResponse = (data) => ({
-        countries: data?.countries || [],
-        industries: data?.industries || [],
-        company_sizes: data?.company_sizes || [],
-        revenue_ranges: data?.revenue_ranges || [],
-      });
-
       try {
         const res = await API.get("/api/linkedin-taxonomy");
-        setTaxonomyOptions(mapTaxonomyResponse(res?.data));
+        setTaxonomyOptions({
+          countries: res?.data?.countries || [],
+          industries: res?.data?.industries || [],
+          company_sizes: res?.data?.company_sizes || [],
+          revenue_ranges: res?.data?.revenue_ranges || [],
+        });
       } catch {
-        try {
-          const res = await API.get("/linkedin-taxonomy");
-          setTaxonomyOptions(mapTaxonomyResponse(res?.data));
-        } catch {
-          setTaxonomyOptions({
-            countries: [],
-            industries: [],
-            company_sizes: [],
-            revenue_ranges: [],
-          });
-        }
+        setTaxonomyOptions({
+          countries: [],
+          industries: [],
+          company_sizes: [],
+          revenue_ranges: [],
+        });
       }
     };
 
@@ -134,187 +127,87 @@ export default function SalesNav() {
             className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
           />
 
-          {taxonomyOptions.countries.length > 0 ? (
-            <MultiSelectDropdown
-              label="Countries"
-              values={countries}
-              setValues={setCountries}
-              options={taxonomyOptions.countries}
-              placeholder="Type to filter countries"
-            />
-          ) : (
-            <MultiValueInput label="Countries" values={countries} setValues={setCountries} />
-          )}
+          <MultiSelectDropdown
+            label="Countries"
+            values={countries}
+            setValues={setCountries}
+            options={taxonomyOptions.countries}
+            placeholder="Type to filter countries"
+          />
+          <MultiSelectDropdown
+            label="Include Industries"
+            values={industriesInclude}
+            setValues={setIndustriesInclude}
+            options={taxonomyOptions.industries}
+            placeholder="Type to filter industries"
+          />
+          <MultiSelectDropdown
+            label="Exclude Industries"
+            values={industriesExclude}
+            setValues={setIndustriesExclude}
+            options={taxonomyOptions.industries}
+            placeholder="Type to filter industries"
+          />
 
-          {taxonomyOptions.industries.length > 0 ? (
-            <MultiSelectDropdown
-              label="Include Industries"
-              values={industriesInclude}
-              setValues={setIndustriesInclude}
-              options={taxonomyOptions.industries}
-              placeholder="Type to filter industries"
-            />
-          ) : (
-            <MultiValueInput
-              label="Include Industries"
-              values={industriesInclude}
-              setValues={setIndustriesInclude}
-            />
-          )}
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              name="employee_min"
+              value={formData.employee_min}
+              onChange={handleChange}
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+            >
+              <option value="">Employee Min</option>
+              {taxonomyOptions.company_sizes.map((size) => (
+                <option key={`employee-min-${size}`} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
 
-          {taxonomyOptions.industries.length > 0 ? (
-            <MultiSelectDropdown
-              label="Exclude Industries"
-              values={industriesExclude}
-              setValues={setIndustriesExclude}
-              options={taxonomyOptions.industries}
-              placeholder="Type to filter industries"
-            />
-          ) : (
-            <MultiValueInput
-              label="Exclude Industries"
-              values={industriesExclude}
-              setValues={setIndustriesExclude}
-            />
-          )}
+            <select
+              name="employee_max"
+              value={formData.employee_max}
+              onChange={handleChange}
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+            >
+              <option value="">Employee Max</option>
+              {taxonomyOptions.company_sizes.map((size) => (
+                <option key={`employee-max-${size}`} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {taxonomyOptions.company_sizes.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Employee Min
-                </label>
-                <select
-                  name="employee_min"
-                  value={formData.employee_min}
-                  onChange={handleChange}
-                  className={dropdownClassName}
-                >
-                  <option value="">Select minimum</option>
-                  {taxonomyOptions.company_sizes.map((size) => (
-                    <option key={`employee-min-${size}`} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              name="revenue_min_usd"
+              value={formData.revenue_min_usd}
+              onChange={handleChange}
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+            >
+              <option value="">Revenue Min</option>
+              {taxonomyOptions.revenue_ranges.map((range) => (
+                <option key={`revenue-min-${range}`} value={range}>
+                  {range}
+                </option>
+              ))}
+            </select>
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Employee Max
-                </label>
-                <select
-                  name="employee_max"
-                  value={formData.employee_max}
-                  onChange={handleChange}
-                  className={dropdownClassName}
-                >
-                  <option value="">Select maximum</option>
-                  {taxonomyOptions.company_sizes.map((size) => (
-                    <option key={`employee-max-${size}`} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Employee Min
-                </label>
-                <input
-                  name="employee_min"
-                  value={formData.employee_min}
-                  onChange={handleChange}
-                  placeholder="Employee Min"
-                  className={inputClassName}
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Employee Max
-                </label>
-                <input
-                  name="employee_max"
-                  value={formData.employee_max}
-                  onChange={handleChange}
-                  placeholder="Employee Max"
-                  className={inputClassName}
-                />
-              </div>
-            </div>
-          )}
-
-          {taxonomyOptions.revenue_ranges.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Revenue Min
-                </label>
-                <select
-                  name="revenue_min_usd"
-                  value={formData.revenue_min_usd}
-                  onChange={handleChange}
-                  className={dropdownClassName}
-                >
-                  <option value="">Select minimum</option>
-                  {taxonomyOptions.revenue_ranges.map((range) => (
-                    <option key={`revenue-min-${range}`} value={range}>
-                      {range}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Revenue Max
-                </label>
-                <select
-                  name="revenue_max_usd"
-                  value={formData.revenue_max_usd}
-                  onChange={handleChange}
-                  className={dropdownClassName}
-                >
-                  <option value="">Select maximum</option>
-                  {taxonomyOptions.revenue_ranges.map((range) => (
-                    <option key={`revenue-max-${range}`} value={range}>
-                      {range}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Revenue Min
-                </label>
-                <input
-                  name="revenue_min_usd"
-                  value={formData.revenue_min_usd}
-                  onChange={handleChange}
-                  placeholder="Revenue Min"
-                  className={inputClassName}
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-100/90">
-                  Revenue Max
-                </label>
-                <input
-                  name="revenue_max_usd"
-                  value={formData.revenue_max_usd}
-                  onChange={handleChange}
-                  placeholder="Revenue Max"
-                  className={inputClassName}
-                />
-              </div>
-            </div>
-          )}
+            <select
+              name="revenue_max_usd"
+              value={formData.revenue_max_usd}
+              onChange={handleChange}
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+            >
+              <option value="">Revenue Max</option>
+              {taxonomyOptions.revenue_ranges.map((range) => (
+                <option key={`revenue-max-${range}`} value={range}>
+                  {range}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <MultiValueInput
             label="Include Keywords"
