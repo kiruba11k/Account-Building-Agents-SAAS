@@ -15,6 +15,14 @@ def split_queries(filters):
     if direct_salesnav_url:
         return [direct_salesnav_url]
 
+    employee_min = str(filters.get("employee_min") or "").strip()
+    employee_max = str(filters.get("employee_max") or "").strip()
+    revenue_min = str(filters.get("revenue_min_usd") or "").strip()
+    revenue_max = str(filters.get("revenue_max_usd") or "").strip()
+
+    if employee_min or employee_max or revenue_min or revenue_max:
+        return [build_salesnav_company_search(filters)]
+
     queries = []
 
     for size in SIZE_BUCKETS:
