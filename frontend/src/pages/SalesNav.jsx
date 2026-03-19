@@ -100,6 +100,11 @@ export default function SalesNav() {
     setLoading(false);
   };
 
+  const dropdownClassName =
+    "w-full appearance-none rounded-xl border border-cyan-300/35 bg-slate-900/80 px-3 py-2.5 text-slate-100 shadow-[0_0_0_1px_rgba(34,211,238,0.05)] transition focus:border-cyan-300/80 focus:outline-none focus:ring-2 focus:ring-cyan-400/30";
+  const inputClassName =
+    "w-full rounded-xl border border-cyan-300/25 bg-slate-900/70 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-400/20";
+
   return (
     <div className="grid gap-7 lg:grid-cols-[400px_1fr]">
       <div className="glass-panel card-hover sticky top-6 h-fit rounded-3xl p-6">
