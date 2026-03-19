@@ -26,6 +26,7 @@ from app.services.stream_manager import (
     register_subscriber,
     remove_subscriber,
 )
+from app.services.taxonomy_service import get_linkedin_taxonomy
 
 Base.metadata.create_all(bind=engine)
 
@@ -492,6 +493,11 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     background_tasks.add_task(run_pipeline, request.id, data)
 
     return {"request_id": request.id}
+
+
+@app.get("/api/linkedin-taxonomy")
+def linkedin_taxonomy():
+    return get_linkedin_taxonomy()
 
 
 @app.post("/api/run-google-discovery")
