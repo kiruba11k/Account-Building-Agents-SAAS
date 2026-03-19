@@ -432,6 +432,141 @@ def run_pipeline(request_id: int, filters: Dict[str, Any]):
         db.close()
 
 
+
+
+def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
+    db = SessionLocal()
+
+    try:
+        request = db.query(LeadRequest).filter_by(id=request_id).first()
+        if not request:
+            return
+
+        _update_request_state(
+            db,
+            request,
+            status="Running",
+            phase="searching",
+            progress=20,
+            total_results=0,
+        )
+
+        rows, apify_meta = run_google_places_actor(filters)
+
+        _update_request_state(
+            db,
+            request,
+            status="Running",
+            phase="processing",
+            progress=70,
+            total_results=0,
+        )
+
+        db.query(Company).filter_by(request_id=request_id).delete()
+        db.commit()
+
+        seen = set()
+        inserted = 0
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            normalized = _normalize_google_row(row)
+            fingerprint = (
+                normalized.get("company_id")
+                or normalized.get("regular_company_url")
+                or normalized.get("company_url")
+                or normalized.get("company_name")
+            )
+
+            if fingerprint:
+                fingerprint = str(fingerprint).strip().lower()
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+
+            company = Company(
+                request_id=request.id,
+                company_url=normalized.get("company_url"),
+                company_name=normalized.get("company_name"),
+                description=normalized.get("description"),
+                company_id=normalized.get("company_id"),
+                regular_company_url=normalized.get("regular_company_url"),
+                industry=normalized.get("industry"),
+                employees_count=normalized.get("employees_count"),
+                employee_count_range=normalized.get("employee_count_range"),
+                logo_url=normalized.get("logo_url"),
+                is_hiring=normalized.get("is_hiring"),
+                query=normalized.get("query"),
+                timestamp=normalized.get("timestamp"),
+                search_account_profile_id=normalized.get("search_account_profile_id"),
+                search_account_profile_name=normalized.get("search_account_profile_name"),
+                raw_data=normalized.get("raw_data"),
+            )
+            db.add(company)
+            inserted += 1
+
+            if inserted % 25 == 0:
+                db.commit()
+                push_update(
+                    request.id,
+                    {
+                        "type": "status",
+                        "request_id": request.id,
+                        "status": "Running",
+                        "phase": "processing",
+                        "progress": 70,
+                        "total_results": inserted,
+                    },
+                )
+
+        db.commit()
+
+        _update_request_state(
+            db,
+            request,
+            status="Completed",
+            phase="completed",
+            progress=100,
+            total_results=inserted,
+        )
+
+        push_update(
+            request.id,
+            {
+                "type": "end",
+                "request_id": request.id,
+                "status": request.status,
+                "phase": request.phase,
+                "progress": request.progress,
+                "total_results": request.total_results,
+                "apify": apify_meta,
+            },
+        )
+    except Exception as exc:
+        request = db.query(LeadRequest).filter_by(id=request_id).first()
+        if request:
+            request.status = "Failed"
+            request.phase = "failed"
+            request.progress = 100
+            db.commit()
+
+            push_update(
+                request_id,
+                {
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": str(exc),
+                    "status": request.status,
+                    "phase": request.phase,
+                    "progress": request.progress,
+                    "total_results": request.total_results,
+                },
+            )
+    finally:
+        db.close()
+
 @app.get("/api/stream/{request_id}")
 def stream(request_id: int):
     return get_updates(request_id)
@@ -501,12 +636,12 @@ def linkedin_taxonomy():
 
 
 @app.post("/api/run-google-discovery")
-def run_google_discovery(data: dict, db: Session = Depends(get_db)):
+def run_google_discovery(data: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     request = LeadRequest(
         request_name=data.get("request_name") or "Google Discovery Agent",
         status="Running",
-        phase="searching",
-        progress=20,
+        phase="starting",
+        progress=5,
         total_results=0,
         filters=data,
     )
@@ -515,83 +650,26 @@ def run_google_discovery(data: dict, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(request)
 
-    try:
-        rows = run_google_places_actor(data)
-
-        request.phase = "processing"
-        request.progress = 70
-        db.commit()
-
-        seen = set()
-        inserted = 0
-
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-
-            normalized = _normalize_google_row(row)
-            fingerprint = (
-                normalized.get("company_id")
-                or normalized.get("regular_company_url")
-                or normalized.get("company_url")
-                or normalized.get("company_name")
-            )
-
-            if fingerprint:
-                fingerprint = str(fingerprint).strip().lower()
-                if fingerprint in seen:
-                    continue
-                seen.add(fingerprint)
-
-            company = Company(
-                request_id=request.id,
-                company_url=normalized.get("company_url"),
-                company_name=normalized.get("company_name"),
-                description=normalized.get("description"),
-                company_id=normalized.get("company_id"),
-                regular_company_url=normalized.get("regular_company_url"),
-                industry=normalized.get("industry"),
-                employees_count=normalized.get("employees_count"),
-                employee_count_range=normalized.get("employee_count_range"),
-                logo_url=normalized.get("logo_url"),
-                is_hiring=normalized.get("is_hiring"),
-                query=normalized.get("query"),
-                timestamp=normalized.get("timestamp"),
-                search_account_profile_id=normalized.get("search_account_profile_id"),
-                search_account_profile_name=normalized.get("search_account_profile_name"),
-                raw_data=normalized.get("raw_data"),
-            )
-            db.add(company)
-            inserted += 1
-
-        db.commit()
-
-        request.total_results = inserted
-        request.status = "Completed"
-        request.phase = "completed"
-        request.progress = 100
-        db.commit()
-
-        return {
+    push_update(
+        request.id,
+        {
+            "type": "status",
             "request_id": request.id,
-            "total_results": inserted,
-            "endpoint": "run-sync-get-dataset-items",
-            "actor": "compass~crawler-google-places",
-        }
+            "status": request.status,
+            "phase": request.phase,
+            "progress": request.progress,
+            "total_results": request.total_results,
+        },
+    )
 
-    except Exception as exc:
-        request.status = "Failed"
-        request.phase = "failed"
-        request.progress = 100
-        db.commit()
+    background_tasks.add_task(run_google_discovery_pipeline, request.id, data)
 
-        return JSONResponse(
-            status_code=500,
-            content={
-                "request_id": request.id,
-                "error": str(exc),
-            },
-        )
+    return {
+        "request_id": request.id,
+        "status": request.status,
+        "phase": request.phase,
+        "message": "Google scraper queued. Processing in background.",
+    }
 
 
 @app.get("/api/request/{request_id}")
