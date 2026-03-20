@@ -16,9 +16,9 @@ const defaultForm = {
   max_places: 50,
   language: "en",
   scrapePlaceDetailPage: true,
-  includeWebResults: true,
+  includeWebResults: false,
   skipClosedPlaces: true,
-  company_contacts_enrichment: true,
+  company_contacts_enrichment: false,
   max_leads_per_place: 0,
 };
 
@@ -63,7 +63,7 @@ export default function GoogleAgent() {
   }, [formData, searchTerms, categories]);
 
   const endpointLabel = useMemo(
-    () => "Apify actor.call + dataset.iterate_items (background)",
+    () => "Apify actor.start + run polling + dataset.iterate_items",
     []
   );
 

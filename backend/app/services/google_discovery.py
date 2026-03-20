@@ -112,7 +112,10 @@ def _wait_for_run_finish(client: ApifyClient, run_id: str, timeout_secs: int) ->
 
         time.sleep(2)
 
-    raise TimeoutError(f"Apify run {run_id} did not finish within {timeout_secs} seconds.")
+    raise TimeoutError(
+        f"Apify run {run_id} did not finish within {timeout_secs} seconds. "
+        "Increase apifyWaitSecs/apifyTimeoutSecs for long-running searches."
+    )
 
 
 def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -139,10 +142,10 @@ def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
         "maxCrawledPlacesPerSearch": _to_int(_first_present(payload.get("max_places"), payload.get("maxCrawledPlacesPerSearch")), 50),
         "language": _normalize_google_language(payload.get("language")),
         "scrapePlaceDetailPage": _to_bool(payload.get("scrapePlaceDetailPage"), True),
-        "includeWebResults": _to_bool(payload.get("includeWebResults"), True),
+        "includeWebResults": _to_bool(payload.get("includeWebResults"), False),
         "skipClosedPlaces": _to_bool(payload.get("skipClosedPlaces"), True),
-        "scrapeContacts": _to_bool(_first_present(payload.get("scrapeContacts"), payload.get("company_contacts_enrichment")), True),
-        "maxLeadsPerPlace": _to_int(_first_present(payload.get("maxLeadsPerPlace"), payload.get("max_leads_per_place")), 0),
+        "scrapeContacts": _to_bool(_first_present(payload.get("scrapeContacts"), payload.get("company_contacts_enrichment")), False),
+        "maximumLeadsEnrichmentRecords": _to_int(_first_present(payload.get("maximumLeadsEnrichmentRecords"), payload.get("maxLeadsPerPlace"), payload.get("max_leads_per_place")), 0),
     }
 
     if search_terms:
@@ -186,14 +189,16 @@ def run_google_places_actor(payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any
     client = ApifyClient(token)
     actor_client = client.actor(actor_id)
 
-    wait_secs = _to_int(payload.get("apifyWaitSecs"), 1800)
-    run = actor_client.call(run_input=actor_input, wait_secs=wait_secs) or {}
-    run_id = run.get("id")
-    run_status = str(run.get("status") or "").upper()
+    wait_secs = max(1, _to_int(payload.get("apifyWaitSecs"), 300))
+    timeout_secs = max(wait_secs, _to_int(payload.get("apifyTimeoutSecs"), 5400))
 
-    if run_id and run_status not in TERMINAL_RUN_STATUSES:
-        run = _wait_for_run_finish(client, run_id, timeout_secs=wait_secs)
-        run_status = str(run.get("status") or "").upper()
+    run = actor_client.start(run_input=actor_input) or {}
+    run_id = run.get("id")
+    if not run_id:
+        raise RuntimeError("Apify actor start did not return a run ID.")
+
+    run = _wait_for_run_finish(client, run_id, timeout_secs=timeout_secs)
+    run_status = str(run.get("status") or "").upper()
 
     if run_status != "SUCCEEDED":
         status_message = run.get("statusMessage") or "No status message returned."
@@ -209,5 +214,5 @@ def run_google_places_actor(payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any
         "actor": actor_id,
         "run_id": run.get("id"),
         "dataset_id": dataset_id,
-        "endpoint": "actor.call + dataset.iterate_items",
+        "endpoint": "actor.start + run.poll + dataset.iterate_items",
     }
