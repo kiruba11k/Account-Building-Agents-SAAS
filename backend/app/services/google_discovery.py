@@ -51,6 +51,24 @@ def _to_int(value: Any, default: int) -> int:
         return default
 
 
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _to_string_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        normalized = value.replace("\n", ";").replace(",", ";")
+        return [part.strip() for part in normalized.split(";") if part.strip()]
+    return []
+
+
 def _normalize_actor_id(actor_id: str) -> str:
     raw = (actor_id or DEFAULT_GOOGLE_ACTOR).strip()
     return raw.replace("~", "/")
@@ -80,31 +98,61 @@ def _normalize_google_language(value: Any) -> str:
 
 
 def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
-    search_terms = payload.get("search_terms") or payload.get("searchStringsArray") or []
-    if isinstance(search_terms, str):
-        search_terms = [s.strip() for s in search_terms.split(";") if s.strip()]
+    search_terms = _to_string_list(payload.get("search_terms") or payload.get("searchStringsArray"))
+    categories = _to_string_list(
+        payload.get("categories")
+        or payload.get("placeCategories")
+        or payload.get("categoryFilterWords")
+    )
+
+    start_urls_raw = payload.get("startUrls") or payload.get("googleMapsUrls") or payload.get("googleMapsUrlsArray")
+    start_url_strings = _to_string_list(start_urls_raw)
+    start_urls = [{"url": url} for url in start_url_strings]
+
+    scrape_all_places = _to_bool(
+        payload.get("allPlacesNoSearchAction")
+        if payload.get("allPlacesNoSearchAction") is not None
+        else payload.get("scrapeAllPlaces"),
+        False,
+    )
 
     actor_input: Dict[str, Any] = {
-        "searchStringsArray": search_terms,
         "locationQuery": str(payload.get("location") or payload.get("locationQuery") or "").strip(),
-        "maxCrawledPlacesPerSearch": _to_int(payload.get("max_places") or payload.get("maxCrawledPlacesPerSearch"), 50),
+        "maxCrawledPlacesPerSearch": _to_int(_first_present(payload.get("max_places"), payload.get("maxCrawledPlacesPerSearch")), 50),
         "language": _normalize_google_language(payload.get("language")),
         "scrapePlaceDetailPage": _to_bool(payload.get("scrapePlaceDetailPage"), True),
         "includeWebResults": _to_bool(payload.get("includeWebResults"), True),
         "skipClosedPlaces": _to_bool(payload.get("skipClosedPlaces"), True),
-        "scrapeContacts": _to_bool(payload.get("scrapeContacts") or payload.get("company_contacts_enrichment"), True),
-        "maxLeadsPerPlace": _to_int(payload.get("maxLeadsPerPlace") or payload.get("max_leads_per_place"), 0),
+        "scrapeContacts": _to_bool(_first_present(payload.get("scrapeContacts"), payload.get("company_contacts_enrichment")), True),
+        "maxLeadsPerPlace": _to_int(_first_present(payload.get("maxLeadsPerPlace"), payload.get("max_leads_per_place")), 0),
     }
 
-    categories = payload.get("categories") or payload.get("placeCategories")
+    if search_terms:
+        actor_input["searchStringsArray"] = search_terms
     if categories:
-        if isinstance(categories, str):
-            categories = [c.strip() for c in categories.split(";") if c.strip()]
-        actor_input["placeCategories"] = categories
+        actor_input["categoryFilterWords"] = categories
+    if start_urls:
+        actor_input["startUrls"] = start_urls
+    if scrape_all_places:
+        actor_input["allPlacesNoSearchAction"] = True
 
     raw_override = payload.get("raw_apify_input")
     if isinstance(raw_override, dict):
         actor_input.update(raw_override)
+
+    has_required_search_source = any(
+        [
+            bool(actor_input.get("searchStringsArray")),
+            bool(actor_input.get("categoryFilterWords")),
+            bool(actor_input.get("startUrls")),
+            bool(actor_input.get("allPlacesNoSearchAction")),
+        ]
+    )
+    if not has_required_search_source:
+        raise ValueError(
+            "Google discovery input must include at least one of: searchStringsArray, "
+            "categoryFilterWords, startUrls, or allPlacesNoSearchAction."
+        )
 
     return actor_input
 
@@ -120,7 +168,8 @@ def run_google_places_actor(payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any
     client = ApifyClient(token)
     actor_client = client.actor(actor_id)
 
-    run = actor_client.call(run_input=actor_input)
+    wait_secs = _to_int(payload.get("apifyWaitSecs"), 1800)
+    run = actor_client.call(run_input=actor_input, wait_secs=wait_secs)
     dataset_id = run.get("defaultDatasetId")
     if not dataset_id:
         return [], {
