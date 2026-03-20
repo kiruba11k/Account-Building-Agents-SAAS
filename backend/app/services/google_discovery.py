@@ -5,253 +5,108 @@ from typing import Any, Dict, List, Tuple
 from apify_client import ApifyClient
 
 DEFAULT_GOOGLE_ACTOR = "compass/crawler-google-places"
-GOOGLE_LANGUAGE_ALIASES = {
-    "english": "en",
-    "spanish": "es",
-    "french": "fr",
-    "german": "de",
-    "italian": "it",
-    "portuguese": "pt-BR",
-    "portuguese (brazil)": "pt-BR",
-    "portuguese (portugal)": "pt-PT",
-    "hindi": "hi",
-    "arabic": "ar",
-    "japanese": "ja",
-    "korean": "ko",
-    "chinese (simplified)": "zh-CN",
-    "chinese (traditional)": "zh-TW",
-}
-ALLOWED_GOOGLE_LANGUAGE_CODES = {
-    "en", "af", "az", "id", "ms", "bs", "ca", "cs", "da", "de", "et", "es",
-    "es-419", "eu", "fil", "fr", "gl", "hr", "zu", "is", "it", "sw", "lv",
-    "lt", "hu", "nl", "no", "uz", "pl", "pt-BR", "pt-PT", "ro", "sq", "sk",
-    "sl", "fi", "sv", "vi", "tr", "el", "bg", "ky", "kk", "mk", "mn", "ru",
-    "sr", "uk", "ka", "hy", "iw", "ur", "ar", "fa", "am", "ne", "hi", "mr",
-    "bn", "pa", "gu", "ta", "te", "kn", "ml", "si", "th", "lo", "my", "km",
-    "ko", "ja", "zh-CN", "zh-TW",
-}
-LOWERCASE_GOOGLE_LANGUAGE_CODES = {code.lower(): code for code in ALLOWED_GOOGLE_LANGUAGE_CODES}
 TERMINAL_RUN_STATUSES = {"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"}
-GOOGLE_INPUT_PASSTHROUGH_KEYS = {
-    "countryCode",
-    "city",
-    "state",
-    "county",
-    "postalCode",
-    "website",
-    "searchMatching",
-    "placeMinimumStars",
-    "maxQuestions",
-    "maxReviews",
-    "reviewsStartDate",
-    "reviewsSort",
-    "reviewsFilterString",
-    "reviewsOrigin",
-    "maxImages",
-    "leadsEnrichmentDepartments",
-    "customGeolocation",
-    "placeIds",
-    "allPlacesNoSearchAction",
-    "scrapeDirectories",
-    "scrapeImageAuthors",
-    "scrapeReviewsPersonalData",
-    "scrapeTableReservationProvider",
-    "scrapeSocialMediaProfiles",
-}
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return value != 0
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
+        return value.lower() in ["true", "1", "yes"]
     return default
 
 
 def _to_int(value: Any, default: int) -> int:
     try:
-        return int(str(value).strip())
-    except Exception:
+        return int(value)
+    except:
         return default
 
 
-def _first_present(*values: Any) -> Any:
-    for value in values:
-        if value is not None:
-            return value
-    return None
-
-
-def _to_string_list(value: Any) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str):
-        normalized = value.replace("\n", ";").replace(",", ";")
-        return [part.strip() for part in normalized.split(";") if part.strip()]
-    return []
-
-
-def _normalize_actor_id(actor_id: str) -> str:
-    raw = (actor_id or DEFAULT_GOOGLE_ACTOR).strip()
-    return raw.replace("~", "/")
-
-
-def _normalize_google_language(value: Any) -> str:
-    if value is None:
-        return "en"
-
-    raw = str(value).strip()
-    if not raw:
-        return "en"
-
-    alias_match = GOOGLE_LANGUAGE_ALIASES.get(raw.lower())
-    if alias_match:
-        return alias_match
-
-    if raw in ALLOWED_GOOGLE_LANGUAGE_CODES:
-        return raw
-
-    lowercase_raw = raw.lower()
-    if lowercase_raw in LOWERCASE_GOOGLE_LANGUAGE_CODES:
-        # Preserve canonical casing for known locale-like values (e.g. zh-CN)
-        return LOWERCASE_GOOGLE_LANGUAGE_CODES[lowercase_raw]
-
-    return "en"
-
-
-def _wait_for_run_finish(client: ApifyClient, run_id: str, timeout_secs: int) -> Dict[str, Any]:
-    run_client = client.run(run_id)
-    deadline = time.monotonic() + max(1, timeout_secs)
-
-    while time.monotonic() < deadline:
-        latest = run_client.get() or {}
-
-        status = str((latest or {}).get("status") or "").upper()
-        if status in TERMINAL_RUN_STATUSES:
-            return latest
-
-        time.sleep(2)
-
-    raise TimeoutError(
-        f"Apify run {run_id} did not finish within {timeout_secs} seconds. "
-        "Increase apifyWaitSecs/apifyTimeoutSecs for long-running searches."
-    )
-
-
 def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
-    search_terms = _to_string_list(payload.get("search_terms") or payload.get("searchStringsArray"))
-    categories = _to_string_list(
-        payload.get("categories")
-        or payload.get("placeCategories")
-        or payload.get("categoryFilterWords")
-    )
-
-    start_urls_raw = payload.get("startUrls") or payload.get("googleMapsUrls") or payload.get("googleMapsUrlsArray")
-    start_url_strings = _to_string_list(start_urls_raw)
-    start_urls = [{"url": url} for url in start_url_strings]
-
-    scrape_all_places = _to_bool(
-        payload.get("allPlacesNoSearchAction")
-        if payload.get("allPlacesNoSearchAction") is not None
-        else payload.get("scrapeAllPlaces"),
-        False,
-    )
-
-    actor_input: Dict[str, Any] = {
-        "locationQuery": str(payload.get("location") or payload.get("locationQuery") or "").strip(),
-        "maxCrawledPlacesPerSearch": _to_int(_first_present(payload.get("max_places"), payload.get("maxCrawledPlacesPerSearch")), 50),
-        "language": _normalize_google_language(payload.get("language")),
-        "scrapePlaceDetailPage": _to_bool(payload.get("scrapePlaceDetailPage"), True),
-        "includeWebResults": _to_bool(payload.get("includeWebResults"), False),
-        "skipClosedPlaces": _to_bool(payload.get("skipClosedPlaces"), True),
-        "scrapeContacts": _to_bool(_first_present(payload.get("scrapeContacts"), payload.get("company_contacts_enrichment")), False),
-        "maximumLeadsEnrichmentRecords": _to_int(_first_present(payload.get("maximumLeadsEnrichmentRecords"), payload.get("maxLeadsPerPlace"), payload.get("max_leads_per_place")), 0),
+    return {
+        "locationQuery": payload.get("location", ""),
+        "searchStringsArray": payload.get("search_terms", ["restaurant"]),
+        "maxCrawledPlacesPerSearch": _to_int(payload.get("max_places"), 50),
+        "language": payload.get("language", "en"),
+        "scrapePlaceDetailPage": _to_bool(payload.get("scrapePlaceDetailPage")),
+        "includeWebResults": _to_bool(payload.get("includeWebResults")),
+        "skipClosedPlaces": _to_bool(payload.get("skipClosedPlaces")),
+        "scrapeContacts": _to_bool(payload.get("company_contacts_enrichment")),
+        "maximumLeadsEnrichmentRecords": _to_int(payload.get("max_leads_per_place"), 0),
+        "scrapeReviewsPersonalData": _to_bool(payload.get("scrapeReviewsPersonalData"), True),
+        "scrapeDirectories": _to_bool(payload.get("scrapeDirectories")),
+        "scrapeImageAuthors": _to_bool(payload.get("scrapeImageAuthors")),
+        "scrapeTableReservationProvider": _to_bool(payload.get("scrapeTableReservationProvider")),
     }
 
-    if search_terms:
-        actor_input["searchStringsArray"] = search_terms
-    if categories:
-        actor_input["categoryFilterWords"] = categories
-    if start_urls:
-        actor_input["startUrls"] = start_urls
-    if scrape_all_places:
-        actor_input["allPlacesNoSearchAction"] = True
 
-    for key in GOOGLE_INPUT_PASSTHROUGH_KEYS:
-        value = payload.get(key)
-        if value is None:
-            continue
+def run_google_places_actor(payload: Dict[str, Any], request_id: str, db):
+    """
+    Background worker:
+    - Starts Apify actor
+    - Polls run
+    - Streams partial results into DB
+    """
 
-        if isinstance(value, str) and not value.strip():
-            continue
-
-        actor_input[key] = value
-
-    raw_override = payload.get("raw_apify_input")
-    if isinstance(raw_override, dict):
-        actor_input.update(raw_override)
-
-    has_required_search_source = any(
-        [
-            bool(actor_input.get("searchStringsArray")),
-            bool(actor_input.get("categoryFilterWords")),
-            bool(actor_input.get("startUrls")),
-            bool(actor_input.get("allPlacesNoSearchAction")),
-        ]
-    )
-    if not has_required_search_source:
-        raise ValueError(
-            "Google discovery input must include at least one of: searchStringsArray, "
-            "categoryFilterWords, startUrls, or allPlacesNoSearchAction."
-        )
-
-    return actor_input
-
-
-def run_google_places_actor(payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    token = os.getenv("APIFY_API_TOKEN", "").strip() or os.getenv("APIFY_TOKEN", "").strip()
+    token = os.getenv("APIFY_API_TOKEN")
     if not token:
-        raise ValueError("Missing APIFY_API_TOKEN (or APIFY_TOKEN) environment variable")
-
-    actor_id = _normalize_actor_id(
-        payload.get("apify_actor_id")
-        or os.getenv("APIFY_GOOGLE_PLACES_ACTOR_ID", DEFAULT_GOOGLE_ACTOR)
-    )
-    actor_input = build_google_places_input(payload)
+        raise ValueError("Missing APIFY_API_TOKEN")
 
     client = ApifyClient(token)
-    actor_client = client.actor(actor_id)
 
-    wait_secs = max(1, _to_int(payload.get("apifyWaitSecs"), 300))
-    timeout_secs = max(wait_secs, _to_int(payload.get("apifyTimeoutSecs"), 5400))
+    actor_input = build_google_places_input(payload)
 
-    run = actor_client.start(run_input=actor_input) or {}
-    run_id = run.get("id")
-    if not run_id:
-        raise RuntimeError("Apify actor start did not return a run ID.")
+    actor = client.actor(payload.get("apify_actor_id", DEFAULT_GOOGLE_ACTOR))
 
-    run = _wait_for_run_finish(client, run_id, timeout_secs=timeout_secs)
-    run_status = str(run.get("status") or "").upper()
+    #  Start run
+    run = actor.start(run_input=actor_input)
+    run_id = run["id"]
 
-    if run_status != "SUCCEEDED":
-        status_message = run.get("statusMessage") or "No status message returned."
-        raise RuntimeError(f"Apify run ended with status '{run_status}': {status_message}")
+    db.update_request(request_id, {"status": "Running", "progress": 5})
 
-    dataset_id = run.get("defaultDatasetId")
-    if not dataset_id:
-        raise RuntimeError("Apify run succeeded but no dataset ID was returned.")
+    seen_ids = set()
 
-    rows = list(client.dataset(dataset_id).iterate_items())
+    while True:
+        run_info = client.run(run_id).get()
+        status = run_info["status"]
 
-    return rows, {
-        "actor": actor_id,
-        "run_id": run.get("id"),
-        "dataset_id": dataset_id,
-        "endpoint": "actor.start + run.poll + dataset.iterate_items",
-    }
+        dataset_id = run_info.get("defaultDatasetId")
+
+        #  Fetch partial results
+        if dataset_id:
+            items = list(client.dataset(dataset_id).iterate_items())
+
+            new_items = []
+            for item in items:
+                uid = item.get("placeId") or str(hash(str(item)))
+                if uid not in seen_ids:
+                    seen_ids.add(uid)
+                    new_items.append(item)
+
+            if new_items:
+                db.insert_results(request_id, new_items)
+
+        #  Update progress
+        progress = run_info.get("stats", {}).get("progress", 50)
+        db.update_request(request_id, {
+            "status": status,
+            "progress": min(progress, 95)
+        })
+
+        if status in TERMINAL_RUN_STATUSES:
+            break
+
+        time.sleep(3)
+
+    if status != "SUCCEEDED":
+        db.update_request(request_id, {
+            "status": "Failed",
+            "progress": 100
+        })
+        return
+
+    db.update_request(request_id, {
+        "status": "Completed",
+        "progress": 100
+    })
