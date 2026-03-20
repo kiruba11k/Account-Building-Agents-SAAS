@@ -4,6 +4,32 @@ from typing import Any, Dict, List, Tuple
 from apify_client import ApifyClient
 
 DEFAULT_GOOGLE_ACTOR = "compass/crawler-google-places"
+GOOGLE_LANGUAGE_ALIASES = {
+    "english": "en",
+    "spanish": "es",
+    "french": "fr",
+    "german": "de",
+    "italian": "it",
+    "portuguese": "pt-BR",
+    "portuguese (brazil)": "pt-BR",
+    "portuguese (portugal)": "pt-PT",
+    "hindi": "hi",
+    "arabic": "ar",
+    "japanese": "ja",
+    "korean": "ko",
+    "chinese (simplified)": "zh-CN",
+    "chinese (traditional)": "zh-TW",
+}
+ALLOWED_GOOGLE_LANGUAGE_CODES = {
+    "en", "af", "az", "id", "ms", "bs", "ca", "cs", "da", "de", "et", "es",
+    "es-419", "eu", "fil", "fr", "gl", "hr", "zu", "is", "it", "sw", "lv",
+    "lt", "hu", "nl", "no", "uz", "pl", "pt-BR", "pt-PT", "ro", "sq", "sk",
+    "sl", "fi", "sv", "vi", "tr", "el", "bg", "ky", "kk", "mk", "mn", "ru",
+    "sr", "uk", "ka", "hy", "iw", "ur", "ar", "fa", "am", "ne", "hi", "mr",
+    "bn", "pa", "gu", "ta", "te", "kn", "ml", "si", "th", "lo", "my", "km",
+    "ko", "ja", "zh-CN", "zh-TW",
+}
+LOWERCASE_GOOGLE_LANGUAGE_CODES = {code.lower(): code for code in ALLOWED_GOOGLE_LANGUAGE_CODES}
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -30,6 +56,29 @@ def _normalize_actor_id(actor_id: str) -> str:
     return raw.replace("~", "/")
 
 
+def _normalize_google_language(value: Any) -> str:
+    if value is None:
+        return "en"
+
+    raw = str(value).strip()
+    if not raw:
+        return "en"
+
+    alias_match = GOOGLE_LANGUAGE_ALIASES.get(raw.lower())
+    if alias_match:
+        return alias_match
+
+    if raw in ALLOWED_GOOGLE_LANGUAGE_CODES:
+        return raw
+
+    lowercase_raw = raw.lower()
+    if lowercase_raw in LOWERCASE_GOOGLE_LANGUAGE_CODES:
+        # Preserve canonical casing for known locale-like values (e.g. zh-CN)
+        return LOWERCASE_GOOGLE_LANGUAGE_CODES[lowercase_raw]
+
+    return "en"
+
+
 def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     search_terms = payload.get("search_terms") or payload.get("searchStringsArray") or []
     if isinstance(search_terms, str):
@@ -39,7 +88,7 @@ def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
         "searchStringsArray": search_terms,
         "locationQuery": str(payload.get("location") or payload.get("locationQuery") or "").strip(),
         "maxCrawledPlacesPerSearch": _to_int(payload.get("max_places") or payload.get("maxCrawledPlacesPerSearch"), 50),
-        "language": payload.get("language") or "English",
+        "language": _normalize_google_language(payload.get("language")),
         "scrapePlaceDetailPage": _to_bool(payload.get("scrapePlaceDetailPage"), True),
         "includeWebResults": _to_bool(payload.get("includeWebResults"), True),
         "skipClosedPlaces": _to_bool(payload.get("skipClosedPlaces"), True),
