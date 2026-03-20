@@ -14,7 +14,7 @@ const defaultForm = {
   request_name: "",
   location: "New York, USA",
   max_places: 50,
-  language: "English",
+  language: "en",
   scrapePlaceDetailPage: true,
   includeWebResults: true,
   skipClosedPlaces: true,
@@ -127,7 +127,7 @@ export default function GoogleAgent() {
             name="language"
             value={formData.language}
             onChange={handleChange}
-            placeholder="Language"
+            placeholder="Language code (e.g. en, hi, fr, zh-CN)"
             className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
           />
 
