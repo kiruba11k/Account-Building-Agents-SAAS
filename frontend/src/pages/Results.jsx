@@ -44,6 +44,7 @@ export default function Results() {
   const [total, setTotal] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
   const [streamState, setStreamState] = useState("connecting");
+  const [alerts, setAlerts] = useState([]);
 
   const limit = 50;
   const seenRef = useRef(new Set());
@@ -99,6 +100,7 @@ export default function Results() {
     setResults([]);
     setLiveCount(0);
     setStreamState("connecting");
+    setAlerts([]);
     seenRef.current = new Set();
   }, [id]);
 
@@ -166,6 +168,12 @@ export default function Results() {
           if (page === 1) {
             setResults((prev) => [payload, ...prev].slice(0, limit));
           }
+          return;
+        }
+
+        if (payload.type === "warning" || payload.type === "error") {
+          const message = payload?.message || "Unknown pipeline error";
+          setAlerts((prev) => [{ type: payload.type, message }, ...prev].slice(0, 6));
         }
       } catch {
         // ignore malformed stream events
@@ -215,6 +223,23 @@ export default function Results() {
       </div>
 
       <div className="glass-panel rounded-3xl p-5">
+        {alerts.length > 0 && (
+          <div className="mb-4 space-y-2">
+            {alerts.map((alert, index) => (
+              <div
+                key={`${alert.type}-${index}`}
+                className={`rounded-xl border px-4 py-2 text-sm ${
+                  alert.type === "error"
+                    ? "border-rose-300/40 bg-rose-400/10 text-rose-100"
+                    : "border-amber-300/40 bg-amber-400/10 text-amber-100"
+                }`}
+              >
+                <b>{alert.type === "error" ? "Error" : "Warning"}:</b> {alert.message}
+              </div>
+            ))}
+          </div>
+        )}
+
         <h3 className="text-base font-semibold text-white">Submitted Input Snapshot</h3>
         <div className="mt-3 flex flex-wrap gap-2">
           {filterEntries.length > 0 ? (
