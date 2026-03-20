@@ -5,7 +5,7 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Empty
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -21,6 +21,9 @@ from app.services.apify_service import enrich_companies, run_salesnav_search
 from app.services.google_discovery import run_google_places_actor
 from app.services.query_splitter import split_queries
 from app.services.stream_manager import (
+    clear_request_rows,
+    get_all_request_rows,
+    get_request_rows,
     get_updates,
     pop_subscriber,
     push_update,
@@ -201,6 +204,7 @@ def run_pipeline(request_id: int, filters: Dict[str, Any]):
 
         db.query(Company).filter_by(request_id=request_id).delete()
         db.commit()
+        clear_request_rows(request_id)
 
         queries = split_queries(filters)
         if not queries:
@@ -226,31 +230,8 @@ def run_pipeline(request_id: int, filters: Dict[str, Any]):
         stop_event = threading.Event()
         total_inserted = 0
 
-        def flush_batch(local_db: Session, batch: List[Tuple[Company, Dict[str, Any]]]):
-            nonlocal total_inserted
-
-            if not batch:
-                return
-
-            local_db.add_all([company for company, _ in batch])
-            local_db.commit()
-
-            with total_lock:
-                for company, payload in batch:
-                    total_inserted += 1
-                    payload["id"] = company.id
-                    payload["total_results"] = total_inserted
-                    push_update(request_id, payload)
-
-                    if total_inserted >= max_total_results:
-                        stop_event.set()
-
-            batch.clear()
-
         def worker(bucket_index: int, search_url: str) -> Dict[str, Any]:
-            local_db = SessionLocal()
             inserted_local = 0
-            batch: List[Tuple[Company, Dict[str, Any]]] = []
 
             try:
                 if stop_event.is_set():
@@ -296,49 +277,31 @@ def run_pipeline(request_id: int, filters: Dict[str, Any]):
                                 continue
                             seen_fingerprints.add(fingerprint)
 
-                        website = item.get("website") or extract_domain(item.get("url"))
-                        company = Company(
-                            request_id=request_id,
-                            company_url=item.get("url"),
-                            company_name=item.get("name"),
-                            description=item.get("description"),
-                            company_id=item.get("companyId") or item.get("id"),
-                            regular_company_url=item.get("linkedinUrl") or item.get("url"),
-                            industry=item.get("industry"),
-                            employees_count=str(item.get("employees")) if item.get("employees") is not None else None,
-                            logo_url=item.get("logo"),
-                            query=str(bucket_index + 1),
-                            raw_data={k: _safe_jsonable(v) for k, v in item.items()},
-                        )
+                        with total_lock:
+                            total_inserted += 1
+                            current_total = total_inserted
+                            if total_inserted >= max_total_results:
+                                stop_event.set()
 
-                        batch.append(
-                            (
-                                company,
-                                {
-                                    "type": "company",
-                                    "request_id": request_id,
-                                    "company_name": company.company_name,
-                                    "company_url": company.company_url,
-                                    "website": website,
-                                    "industry": company.industry,
-                                    "employees_count": company.employees_count,
-                                },
-                            )
-                        )
-
+                        payload = {
+                            "type": "company",
+                            "request_id": request_id,
+                            "id": current_total,
+                            "query": str(bucket_index + 1),
+                            "company_name": item.get("name") or item.get("companyName"),
+                            "company_url": item.get("url") or item.get("linkedinUrl"),
+                            "industry": item.get("industry"),
+                            "employees_count": str(item.get("employees")) if item.get("employees") is not None else None,
+                            "total_results": current_total,
+                            "raw_data": {k: _safe_jsonable(v) for k, v in item.items()},
+                        }
+                        push_update(request_id, payload)
                         inserted_local += 1
 
-                        if len(batch) >= 20:
-                            flush_batch(local_db, batch)
-
-                flush_batch(local_db, batch)
                 return {"bucket": bucket_index, "inserted": inserted_local, "error": None}
 
             except Exception as error:
-                local_db.rollback()
                 return {"bucket": bucket_index, "inserted": inserted_local, "error": str(error)}
-            finally:
-                local_db.close()
 
         completed = 0
 
@@ -746,6 +709,7 @@ def run_salesnav(data: dict, background_tasks: BackgroundTasks, db: Session = De
     db.add(request)
     db.commit()
     db.refresh(request)
+    clear_request_rows(request.id)
 
     push_update(
         request.id,
@@ -871,12 +835,15 @@ def get_results(request_id: int, page: int = 1, limit: int = 50, db: Session = D
     rows = query.offset(offset).limit(limit).all()
     total = query.count()
 
-    return {
-        "total": total,
-        "page": page,
-        "limit": limit,
-        "results": [_model_to_dict(row) for row in rows],
-    }
+    if total > 0:
+        return {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "results": [_model_to_dict(row) for row in rows],
+        }
+
+    return get_request_rows(request_id, page=page, limit=limit)
 
 
 @app.get("/api/requests")
@@ -894,13 +861,15 @@ def get_requests(db: Session = Depends(get_db)):
 def download_file(request_id: int, format: str = Query("csv"), db: Session = Depends(get_db)):
     companies = db.query(Company).filter_by(request_id=request_id).all()
 
-    if not companies:
-        return JSONResponse(
-            status_code=404,
-            content={"error": "No results found for this request_id"},
-        )
-
-    rows = _build_export_rows(companies)
+    if companies:
+        rows = _build_export_rows(companies)
+    else:
+        rows = get_all_request_rows(request_id)
+        if not rows:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "No results found for this request_id"},
+            )
     output_format = (format or "csv").strip().lower()
 
     if output_format == "json":
