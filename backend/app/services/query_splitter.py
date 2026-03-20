@@ -28,6 +28,7 @@ def split_queries(filters):
     for size in SIZE_BUCKETS:
         f = filters.copy()
         f["employee_min"] = size
+        f["employee_max"] = size
         queries.append(build_salesnav_company_search(f))
 
     return queries
