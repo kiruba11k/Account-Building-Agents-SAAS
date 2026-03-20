@@ -15,11 +15,16 @@ const defaultForm = {
   location: "New York, USA",
   max_places: 50,
   language: "en",
-  scrapePlaceDetailPage: true,
+  scrapePlaceDetailPage: false,
   includeWebResults: false,
-  skipClosedPlaces: true,
+  skipClosedPlaces: false,
   company_contacts_enrichment: false,
   max_leads_per_place: 0,
+  scrapeDirectories: false,
+  scrapeImageAuthors: false,
+  scrapeReviewsPersonalData: true,
+  scrapeTableReservationProvider: false,
+  apify_actor_id: "compass/crawler-google-places",
 };
 
 export default function GoogleAgent() {
@@ -29,11 +34,16 @@ export default function GoogleAgent() {
   const [categories, setCategories] = useState([]);
   const [activeRequest, setActiveRequest] = useState(null);
   const [formData, setFormData] = useState(defaultForm);
+  const [rawActorInput, setRawActorInput] = useState("");
+  const [rawActorInputError, setRawActorInputError] = useState("");
 
   useEffect(() => {
     const savedDraft = getGoogleDraft();
     if (savedDraft) {
       setFormData({ ...defaultForm, ...(savedDraft.formData || {}) });
+      if (typeof savedDraft.rawActorInput === "string") {
+        setRawActorInput(savedDraft.rawActorInput);
+      }
       if (Array.isArray(savedDraft.searchTerms) && savedDraft.searchTerms.length > 0) {
         setSearchTerms(savedDraft.searchTerms);
       }
@@ -59,8 +69,8 @@ export default function GoogleAgent() {
   }, []);
 
   useEffect(() => {
-    saveGoogleDraft({ formData, searchTerms, categories });
-  }, [formData, searchTerms, categories]);
+    saveGoogleDraft({ formData, searchTerms, categories, rawActorInput });
+  }, [formData, searchTerms, categories, rawActorInput]);
 
   const endpointLabel = useMemo(
     () => "Apify actor.start + run polling + dataset.iterate_items",
@@ -76,12 +86,24 @@ export default function GoogleAgent() {
   };
 
   const launchAgent = async () => {
+    let rawApifyInput = null;
+    if (rawActorInput.trim()) {
+      try {
+        rawApifyInput = JSON.parse(rawActorInput);
+        setRawActorInputError("");
+      } catch {
+        setRawActorInputError("Raw actor JSON is invalid. Fix JSON before launching.");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const payload = {
         ...formData,
         search_terms: searchTerms,
         categories,
+        raw_apify_input: rawApifyInput,
       };
       const res = await API.post("/api/run-google-discovery", payload);
       rememberGoogleActiveRequest(res.data.request_id);
@@ -130,6 +152,13 @@ export default function GoogleAgent() {
             placeholder="Language code (e.g. en, hi, fr, zh-CN)"
             className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
           />
+          <input
+            name="apify_actor_id"
+            value={formData.apify_actor_id}
+            onChange={handleChange}
+            placeholder="Apify actor ID"
+            className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+          />
 
           <MultiValueInput label="Categories" values={categories} setValues={setCategories} />
 
@@ -149,6 +178,52 @@ export default function GoogleAgent() {
             <input type="checkbox" name="company_contacts_enrichment" checked={formData.company_contacts_enrichment} onChange={handleChange} />
             Company contacts enrichment
           </label>
+          <input
+            name="max_leads_per_place"
+            type="number"
+            value={formData.max_leads_per_place}
+            onChange={handleChange}
+            min={0}
+            placeholder="Maximum leads enrichment records per place"
+            className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
+          />
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input type="checkbox" name="scrapeDirectories" checked={formData.scrapeDirectories} onChange={handleChange} />
+            Scrape directories
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input type="checkbox" name="scrapeImageAuthors" checked={formData.scrapeImageAuthors} onChange={handleChange} />
+            Include image authors
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input type="checkbox" name="scrapeReviewsPersonalData" checked={formData.scrapeReviewsPersonalData} onChange={handleChange} />
+            Include reviewers' data
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input type="checkbox" name="scrapeTableReservationProvider" checked={formData.scrapeTableReservationProvider} onChange={handleChange} />
+            Scrape table reservation providers
+          </label>
+
+          <div>
+            <label className="mb-2 block text-xs uppercase tracking-wide text-slate-300">
+              Raw Apify input override (optional JSON)
+            </label>
+            <textarea
+              value={rawActorInput}
+              onChange={(e) => {
+                setRawActorInput(e.target.value);
+                if (rawActorInputError) {
+                  setRawActorInputError("");
+                }
+              }}
+              rows={10}
+              placeholder='{"searchMatching":"all","scrapeSocialMediaProfiles":{"facebooks":false}}'
+              className="w-full rounded-xl border border-white/15 bg-slate-950/70 px-3 py-2.5 font-mono text-xs text-slate-100 placeholder:text-slate-400 focus:border-cyan-300/70 focus:outline-none"
+            />
+            {rawActorInputError && (
+              <p className="mt-2 text-xs text-rose-300">{rawActorInputError}</p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -178,6 +253,7 @@ export default function GoogleAgent() {
 
         <button
           onClick={launchAgent}
+          disabled={loading}
           className="mt-8 rounded-2xl bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500 px-7 py-3 text-sm font-semibold text-white shadow-[0_10px_25px_rgba(59,130,246,0.45)] transition hover:scale-[1.02]"
         >
           {loading ? "Launching Agent..." : "Launch Google Discovery"}

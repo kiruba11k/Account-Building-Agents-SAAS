@@ -32,6 +32,32 @@ ALLOWED_GOOGLE_LANGUAGE_CODES = {
 }
 LOWERCASE_GOOGLE_LANGUAGE_CODES = {code.lower(): code for code in ALLOWED_GOOGLE_LANGUAGE_CODES}
 TERMINAL_RUN_STATUSES = {"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"}
+GOOGLE_INPUT_PASSTHROUGH_KEYS = {
+    "countryCode",
+    "city",
+    "state",
+    "county",
+    "postalCode",
+    "website",
+    "searchMatching",
+    "placeMinimumStars",
+    "maxQuestions",
+    "maxReviews",
+    "reviewsStartDate",
+    "reviewsSort",
+    "reviewsFilterString",
+    "reviewsOrigin",
+    "maxImages",
+    "leadsEnrichmentDepartments",
+    "customGeolocation",
+    "placeIds",
+    "allPlacesNoSearchAction",
+    "scrapeDirectories",
+    "scrapeImageAuthors",
+    "scrapeReviewsPersonalData",
+    "scrapeTableReservationProvider",
+    "scrapeSocialMediaProfiles",
+}
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -157,6 +183,16 @@ def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     if scrape_all_places:
         actor_input["allPlacesNoSearchAction"] = True
 
+    for key in GOOGLE_INPUT_PASSTHROUGH_KEYS:
+        value = payload.get(key)
+        if value is None:
+            continue
+
+        if isinstance(value, str) and not value.strip():
+            continue
+
+        actor_input[key] = value
+
     raw_override = payload.get("raw_apify_input")
     if isinstance(raw_override, dict):
         actor_input.update(raw_override)
@@ -183,7 +219,10 @@ def run_google_places_actor(payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any
     if not token:
         raise ValueError("Missing APIFY_API_TOKEN (or APIFY_TOKEN) environment variable")
 
-    actor_id = _normalize_actor_id(os.getenv("APIFY_GOOGLE_PLACES_ACTOR_ID", DEFAULT_GOOGLE_ACTOR))
+    actor_id = _normalize_actor_id(
+        payload.get("apify_actor_id")
+        or os.getenv("APIFY_GOOGLE_PLACES_ACTOR_ID", DEFAULT_GOOGLE_ACTOR)
+    )
     actor_input = build_google_places_input(payload)
 
     client = ApifyClient(token)
