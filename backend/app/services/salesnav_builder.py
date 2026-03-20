@@ -135,6 +135,9 @@ def _company_size_bounds(label):
 
 
 def _headcount_ids_for_range(employee_min, employee_max):
+    if not str(employee_min or "").strip() and not str(employee_max or "").strip():
+        return []
+
     min_bounds = _company_size_bounds(employee_min) if employee_min else None
     max_bounds = _company_size_bounds(employee_max) if employee_max else None
 
@@ -207,6 +210,9 @@ def _revenue_bounds(label):
 
 
 def _revenue_ids_for_range(revenue_min, revenue_max):
+    if not str(revenue_min or "").strip() and not str(revenue_max or "").strip():
+        return []
+
     min_bounds = _revenue_bounds(revenue_min) if revenue_min else None
     max_bounds = _revenue_bounds(revenue_max) if revenue_max else None
 
