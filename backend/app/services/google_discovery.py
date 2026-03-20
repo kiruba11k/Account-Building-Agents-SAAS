@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any, Dict, List, Tuple
 
 from apify_client import ApifyClient
@@ -30,6 +31,7 @@ ALLOWED_GOOGLE_LANGUAGE_CODES = {
     "ko", "ja", "zh-CN", "zh-TW",
 }
 LOWERCASE_GOOGLE_LANGUAGE_CODES = {code.lower(): code for code in ALLOWED_GOOGLE_LANGUAGE_CODES}
+TERMINAL_RUN_STATUSES = {"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"}
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -95,6 +97,22 @@ def _normalize_google_language(value: Any) -> str:
         return LOWERCASE_GOOGLE_LANGUAGE_CODES[lowercase_raw]
 
     return "en"
+
+
+def _wait_for_run_finish(client: ApifyClient, run_id: str, timeout_secs: int) -> Dict[str, Any]:
+    run_client = client.run(run_id)
+    deadline = time.monotonic() + max(1, timeout_secs)
+
+    while time.monotonic() < deadline:
+        latest = run_client.get() or {}
+
+        status = str((latest or {}).get("status") or "").upper()
+        if status in TERMINAL_RUN_STATUSES:
+            return latest
+
+        time.sleep(2)
+
+    raise TimeoutError(f"Apify run {run_id} did not finish within {timeout_secs} seconds.")
 
 
 def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -169,15 +187,21 @@ def run_google_places_actor(payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any
     actor_client = client.actor(actor_id)
 
     wait_secs = _to_int(payload.get("apifyWaitSecs"), 1800)
-    run = actor_client.call(run_input=actor_input, wait_secs=wait_secs)
+    run = actor_client.call(run_input=actor_input, wait_secs=wait_secs) or {}
+    run_id = run.get("id")
+    run_status = str(run.get("status") or "").upper()
+
+    if run_id and run_status not in TERMINAL_RUN_STATUSES:
+        run = _wait_for_run_finish(client, run_id, timeout_secs=wait_secs)
+        run_status = str(run.get("status") or "").upper()
+
+    if run_status != "SUCCEEDED":
+        status_message = run.get("statusMessage") or "No status message returned."
+        raise RuntimeError(f"Apify run ended with status '{run_status}': {status_message}")
+
     dataset_id = run.get("defaultDatasetId")
     if not dataset_id:
-        return [], {
-            "actor": actor_id,
-            "run_id": run.get("id"),
-            "dataset_id": None,
-            "endpoint": "actor.call + dataset.iterate_items",
-        }
+        raise RuntimeError("Apify run succeeded but no dataset ID was returned.")
 
     rows = list(client.dataset(dataset_id).iterate_items())
 
