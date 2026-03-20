@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict
 
 from apify_client import ApifyClient
 
@@ -41,12 +41,9 @@ def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def run_google_places_actor(payload: Dict[str, Any], request_id: str, db):
+def run_google_places_actor_stream(payload, request, db, push_update):
     """
-    Background worker:
-    - Starts Apify actor
-    - Polls run
-    - Streams partial results into DB
+    STREAMING version (fits YOUR main.py architecture)
     """
 
     token = os.getenv("APIFY_API_TOKEN")
@@ -59,54 +56,71 @@ def run_google_places_actor(payload: Dict[str, Any], request_id: str, db):
 
     actor = client.actor(payload.get("apify_actor_id", DEFAULT_GOOGLE_ACTOR))
 
-    #  Start run
     run = actor.start(run_input=actor_input)
     run_id = run["id"]
 
-    db.update_request(request_id, {"status": "Running", "progress": 5})
-
     seen_ids = set()
+    inserted = 0
 
     while True:
         run_info = client.run(run_id).get()
         status = run_info["status"]
-
         dataset_id = run_info.get("defaultDatasetId")
 
-        #  Fetch partial results
+        # ✅ STREAM RESULTS LIVE
         if dataset_id:
             items = list(client.dataset(dataset_id).iterate_items())
 
-            new_items = []
-            for item in items:
-                uid = item.get("placeId") or str(hash(str(item)))
-                if uid not in seen_ids:
-                    seen_ids.add(uid)
-                    new_items.append(item)
+            for row in items:
+                uid = row.get("placeId") or str(hash(str(row)))
 
-            if new_items:
-                db.insert_results(request_id, new_items)
+                if uid in seen_ids:
+                    continue
 
-        #  Update progress
+                seen_ids.add(uid)
+                inserted += 1
+
+                push_update(
+                    request.id,
+                    {
+                        "type": "company",
+                        "request_id": request.id,
+                        "agent_type": request.agent_type,
+                        "company_name": row.get("title") or row.get("name"),
+                        "company_url": row.get("website"),
+                        "industry": row.get("categoryName"),
+                        "total_results": inserted,
+                        "raw_data": row,
+                    },
+                )
+
+        # ✅ UPDATE PROGRESS
         progress = run_info.get("stats", {}).get("progress", 50)
-        db.update_request(request_id, {
-            "status": status,
-            "progress": min(progress, 95)
-        })
+
+        db.query(type(request)).filter_by(id=request.id).update(
+            {
+                "progress": min(progress, 95),
+                "phase": "processing",
+                "total_results": inserted,
+            }
+        )
+        db.commit()
+
+        push_update(
+            request.id,
+            {
+                "type": "status",
+                "request_id": request.id,
+                "status": "Running",
+                "phase": "processing",
+                "progress": min(progress, 95),
+                "total_results": inserted,
+            },
+        )
 
         if status in TERMINAL_RUN_STATUSES:
             break
 
         time.sleep(3)
 
-    if status != "SUCCEEDED":
-        db.update_request(request_id, {
-            "status": "Failed",
-            "progress": 100
-        })
-        return
-
-    db.update_request(request_id, {
-        "status": "Completed",
-        "progress": 100
-    })
+    return inserted
