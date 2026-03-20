@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Empty
 from typing import Any, Dict, List
 from urllib.parse import urlparse
-
+from app.services.google_discovery import run_google_places_actor_stream
 import pandas as pd
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 from .database import Base, SessionLocal, engine
 from .models import Company, LeadRequest
 from app.services.apify_service import enrich_companies, run_salesnav_search
-from app.services.google_discovery import run_google_places_actor
 from app.services.query_splitter import split_queries
 from app.services.stream_manager import (
     clear_request_rows,
@@ -400,6 +399,7 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
         if not request:
             return
 
+        # 🔹 Step 1: Start
         _update_request_state(
             db,
             request,
@@ -409,91 +409,77 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
             total_results=0,
         )
 
-        rows, apify_meta = run_google_places_actor(filters)
-
-        _update_request_state(
-            db,
-            request,
-            status="Running",
-            phase="processing",
-            progress=70,
-            total_results=0,
-        )
-
-        db.query(Company).filter_by(request_id=request_id).delete()
-        db.commit()
-
-        seen = set()
+        # 🔹 Step 2: Run streaming Apify
         inserted = 0
+        seen = set()
 
-        for row in rows:
+        def handle_row(row):
+            nonlocal inserted
+
             if not isinstance(row, dict):
-                continue
+                return
 
-            normalized = _normalize_google_row(row)
             fingerprint = (
-                normalized.get("company_id")
-                or normalized.get("regular_company_url")
-                or normalized.get("company_url")
-                or normalized.get("company_name")
+                row.get("placeId")
+                or row.get("googleMapsUrl")
+                or row.get("website")
+                or row.get("title")
             )
 
             if fingerprint:
                 fingerprint = str(fingerprint).strip().lower()
                 if fingerprint in seen:
-                    continue
+                    return
                 seen.add(fingerprint)
 
+            inserted += 1
+
+            # ✅ SAVE TO DB
             company = Company(
                 request_id=request.id,
-                company_url=normalized.get("company_url"),
-                company_name=normalized.get("company_name"),
-                description=normalized.get("description"),
-                company_id=normalized.get("company_id"),
-                regular_company_url=normalized.get("regular_company_url"),
-                industry=normalized.get("industry"),
-                employees_count=normalized.get("employees_count"),
-                employee_count_range=normalized.get("employee_count_range"),
-                logo_url=normalized.get("logo_url"),
-                is_hiring=normalized.get("is_hiring"),
-                query=normalized.get("query"),
-                timestamp=normalized.get("timestamp"),
-                search_account_profile_id=normalized.get("search_account_profile_id"),
-                search_account_profile_name=normalized.get("search_account_profile_name"),
-                raw_data=normalized.get("raw_data"),
+                company_name=row.get("title") or row.get("name"),
+                company_url=row.get("website"),
+                description=row.get("address"),
+                company_id=row.get("placeId"),
+                regular_company_url=row.get("googleMapsUrl"),
+                industry=row.get("categoryName"),
+                employees_count=row.get("reviewsCount"),
+                logo_url=row.get("imageUrl"),
+                raw_data={k: _safe_jsonable(v) for k, v in row.items()},
             )
-            db.add(company)
-            inserted += 1
-            db.flush()
 
-            payload = _model_to_dict(company)
-            payload.pop("raw_data", None)
-            payload.update(
+            db.add(company)
+
+            # 🔹 batch commit
+            if inserted % 20 == 0:
+                db.commit()
+
+            # ✅ STREAM TO UI
+            push_update(
+                request.id,
                 {
                     "type": "company",
                     "request_id": request.id,
                     "agent_type": request.agent_type,
+                    "company_name": company.company_name,
+                    "company_url": company.company_url,
+                    "industry": company.industry,
                     "total_results": inserted,
-                }
+                },
             )
-            push_update(request.id, payload)
 
-            if inserted % 25 == 0:
-                db.commit()
-                push_update(
-                    request.id,
-                    {
-                        "type": "status",
-                        "request_id": request.id,
-                        "status": "Running",
-                        "phase": "processing",
-                        "progress": 70,
-                        "total_results": inserted,
-                    },
-                )
+        # 🚀 STREAMING EXECUTION
+        inserted = run_google_places_actor_stream(
+            filters,
+            request,
+            db,
+            push_update,
+            on_row=handle_row,   # 👈 important hook
+        )
 
         db.commit()
 
+        # 🔹 Step 3: Complete
         _update_request_state(
             db,
             request,
@@ -511,12 +497,13 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
                 "status": request.status,
                 "phase": request.phase,
                 "progress": request.progress,
-                "total_results": request.total_results,
-                "apify": apify_meta,
+                "total_results": inserted,
             },
         )
+
     except Exception as exc:
         request = db.query(LeadRequest).filter_by(id=request_id).first()
+
         if request:
             request.status = "Failed"
             request.phase = "failed"
@@ -529,15 +516,11 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
                     "type": "error",
                     "request_id": request_id,
                     "message": str(exc),
-                    "status": request.status,
-                    "phase": request.phase,
-                    "progress": request.progress,
-                    "total_results": request.total_results,
                 },
             )
+
     finally:
         db.close()
-
 
 def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any]):
     db = SessionLocal()
