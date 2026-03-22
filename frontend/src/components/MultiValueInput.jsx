@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export default function MultiValueInput({ label, values, setValues }) {
+export default function MultiValueInput({ label, values, setValues, placeholder = "Type and press Enter" }) {
   const [input, setInput] = useState("");
 
   const addValue = (e) => {
@@ -29,7 +29,7 @@ export default function MultiValueInput({ label, values, setValues }) {
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={addValue}
-        placeholder="Type and press Enter"
+        placeholder={placeholder}
         className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70 focus:border-cyan-300/70 focus:outline-none"
       />
 
