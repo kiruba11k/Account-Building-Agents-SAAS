@@ -122,6 +122,11 @@ def extract_domain(url):
         return None
 
 
+def _is_linkedin_company_url(value: str) -> bool:
+    domain = extract_domain(value or "")
+    return bool(domain and "linkedin.com" in domain and "/company/" in (value or "").lower())
+
+
 def _fingerprint_company(item: Dict[str, Any]) -> str | None:
     fingerprint = item.get("url") or item.get("linkedinUrl") or extract_domain(item.get("website"))
 
@@ -546,11 +551,21 @@ def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any
         db.query(Company).filter_by(request_id=request_id).delete()
         db.commit()
 
-        urls = filters.get("linkedin_urls") or []
-        if isinstance(urls, str):
-            urls = [line.strip() for line in urls.splitlines() if line.strip()]
+        inputs = (
+            filters.get("company_inputs")
+            or filters.get("company_identifiers")
+            or filters.get("linkedin_urls")
+            or []
+        )
+        if isinstance(inputs, str):
+            inputs = [line.strip() for line in inputs.splitlines() if line.strip()]
 
-        if not isinstance(urls, list) or not urls:
+        if not isinstance(inputs, list):
+            inputs = []
+
+        normalized_inputs = [str(item).strip() for item in inputs if str(item).strip()]
+
+        if not normalized_inputs:
             _update_request_state(
                 db,
                 request,
@@ -561,7 +576,10 @@ def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any
             )
             return
 
-        enriched = enrich_companies(urls)
+        linkedin_urls = [value for value in normalized_inputs if _is_linkedin_company_url(value)]
+        generic_identifiers = [value for value in normalized_inputs if value not in linkedin_urls]
+
+        enriched = enrich_companies(linkedin_urls) if linkedin_urls else []
         inserted = 0
 
         for row in enriched:
@@ -604,7 +622,45 @@ def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any
             push_update(request.id, payload)
 
             if inserted % 15 == 0:
-                progress = min(95, 10 + int((inserted / max(len(urls), 1)) * 80))
+                progress = min(95, 10 + int((inserted / max(len(normalized_inputs), 1)) * 80))
+                _update_request_state(
+                    db,
+                    request,
+                    status="Running",
+                    phase="enriching",
+                    progress=progress,
+                    total_results=inserted,
+                )
+
+        for identifier in generic_identifiers:
+            serp_signals = fetch_company_signals_from_serp(company_name=identifier, linkedin_url=None)
+
+            company = Company(
+                request_id=request.id,
+                company_url=identifier,
+                company_name=identifier,
+                regular_company_url=identifier,
+                employee_count_range=serp_signals.get("employee_band_indicator") if isinstance(serp_signals, dict) else None,
+                raw_data={k: _safe_jsonable(v) for k, v in (serp_signals or {}).items()},
+            )
+            db.add(company)
+            inserted += 1
+            db.flush()
+
+            payload = _model_to_dict(company)
+            payload.pop("raw_data", None)
+            payload.update(
+                {
+                    "type": "company",
+                    "request_id": request.id,
+                    "agent_type": request.agent_type,
+                    "total_results": inserted,
+                }
+            )
+            push_update(request.id, payload)
+
+            if inserted % 15 == 0:
+                progress = min(95, 10 + int((inserted / max(len(normalized_inputs), 1)) * 80))
                 _update_request_state(
                     db,
                     request,

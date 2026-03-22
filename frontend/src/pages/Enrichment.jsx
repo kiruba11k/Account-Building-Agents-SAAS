@@ -12,7 +12,7 @@ import { useEffect } from "react";
 export default function Enrichment() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [urls, setUrls] = useState([]);
+  const [companyInputs, setCompanyInputs] = useState([]);
   const [requestName, setRequestName] = useState("");
   const [activeRequest, setActiveRequest] = useState(null);
 
@@ -34,8 +34,8 @@ export default function Enrichment() {
   }, []);
 
   const launch = async () => {
-    if (!urls.length) {
-      alert("Add at least one LinkedIn company URL");
+    if (!companyInputs.length) {
+      alert("Add at least one company name or website");
       return;
     }
 
@@ -43,7 +43,7 @@ export default function Enrichment() {
     try {
       const res = await API.post("/api/run-firmographic-enricher", {
         request_name: requestName,
-        linkedin_urls: urls,
+        company_inputs: companyInputs,
       });
       rememberEnrichmentActiveRequest(res.data.request_id);
       setActiveRequest({ request_id: String(res.data.request_id), status: "Running" });
@@ -65,7 +65,12 @@ export default function Enrichment() {
           className="w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-slate-100 placeholder:text-slate-300/70"
         />
         <div className="mt-5">
-          <MultiValueInput label="LinkedIn Company URLs" values={urls} setValues={setUrls} />
+          <MultiValueInput
+            label="Company Names or Website URLs"
+            values={companyInputs}
+            setValues={setCompanyInputs}
+            placeholder="e.g. Stripe or stripe.com"
+          />
         </div>
       </div>
 
