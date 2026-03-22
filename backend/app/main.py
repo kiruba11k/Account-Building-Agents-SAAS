@@ -919,6 +919,10 @@ def get_requests(db: Session = Depends(get_db)):
 
 @app.get("/api/download/{request_id}")
 def download_file(request_id: int, format: str = Query("csv"), db: Session = Depends(get_db)):
+    request = db.query(LeadRequest).filter_by(id=request_id).first()
+    agent_type = (request.agent_type if request else "agent") or "agent"
+    file_stem = f"{agent_type}_{request_id}"
+
     companies = db.query(Company).filter_by(request_id=request_id).all()
 
     if companies:
@@ -933,32 +937,32 @@ def download_file(request_id: int, format: str = Query("csv"), db: Session = Dep
     output_format = (format or "csv").strip().lower()
 
     if output_format == "json":
-        file_path = os.path.join(tempfile.gettempdir(), f"salesnav_{request_id}.json")
+        file_path = os.path.join(tempfile.gettempdir(), f"{file_stem}.json")
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(rows, f, ensure_ascii=False, indent=2)
 
         return FileResponse(
             file_path,
-            filename=f"salesnav_{request_id}.json",
+            filename=f"{file_stem}.json",
             media_type="application/json",
         )
 
     df = pd.DataFrame(rows)
 
     if output_format == "xlsx":
-        file_path = os.path.join(tempfile.gettempdir(), f"salesnav_{request_id}.xlsx")
+        file_path = os.path.join(tempfile.gettempdir(), f"{file_stem}.xlsx")
         df.to_excel(file_path, index=False)
         return FileResponse(
             file_path,
-            filename=f"salesnav_{request_id}.xlsx",
+            filename=f"{file_stem}.xlsx",
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    file_path = os.path.join(tempfile.gettempdir(), f"salesnav_{request_id}.csv")
+    file_path = os.path.join(tempfile.gettempdir(), f"{file_stem}.csv")
     df.to_csv(file_path, index=False)
 
     return FileResponse(
         file_path,
-        filename=f"salesnav_{request_id}.csv",
+        filename=f"{file_stem}.csv",
         media_type="text/csv",
     )
