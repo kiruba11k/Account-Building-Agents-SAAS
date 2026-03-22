@@ -3,6 +3,19 @@ import { Link, useParams } from "react-router-dom";
 import api from "../api";
 import { markSalesNavRequestFinal } from "../utils/sessionMemory";
 
+const ENRICHMENT_COLUMNS = [
+  "company_url",
+  "company_name",
+  "regular_company_url",
+  "industry",
+  "employees_count",
+  "employee_count_range",
+  "hiring_status",
+  "serp_sources",
+  "latest_revenue_indicator",
+  "funding_basics_indicator",
+];
+
 const AGENT_META = {
   salesnav: {
     title: "LinkedIn Sales Nav Scraper Results",
@@ -62,11 +75,32 @@ export default function Results() {
       }
 
       const { raw_data: rawData, ...base } = row;
-      return { ...base, ...rawData };
+      const merged = { ...base, ...rawData };
+
+      if (status.agent_type === "enrichment") {
+        return {
+          company_url: merged.company_url || merged.url || "",
+          company_name: merged.company_name || merged.name || "",
+          regular_company_url: merged.regular_company_url || merged.linkedinUrl || merged.url || "",
+          industry: merged.industry || "",
+          employees_count: merged.employees_count || merged.employees || "",
+          employee_count_range: merged.employee_count_range || merged.employee_band_indicator || "",
+          hiring_status: merged.is_hiring || merged.hiring_status || "",
+          serp_sources: merged.serp_sources || "",
+          latest_revenue_indicator: merged.latest_revenue_indicator || "",
+          funding_basics_indicator: merged.funding_basics_indicator || "",
+        };
+      }
+
+      return merged;
     });
-  }, [results]);
+  }, [results, status.agent_type]);
 
   const orderedColumns = useMemo(() => {
+    if (status.agent_type === "enrichment") {
+      return ENRICHMENT_COLUMNS;
+    }
+
     const map = new Map();
     tableRows.forEach((row) => {
       Object.keys(row || {}).forEach((key) => {
@@ -77,7 +111,7 @@ export default function Results() {
     });
 
     return Array.from(map.keys());
-  }, [tableRows]);
+  }, [tableRows, status.agent_type]);
 
   const agentMeta = AGENT_META[status.agent_type] || {
     title: "Agent Results",
@@ -255,12 +289,12 @@ export default function Results() {
       </div>
 
       <div className="glass-panel overflow-hidden rounded-3xl">
-        <div className="overflow-x-auto">
-          <table className="min-w-full table-auto border-collapse text-left text-sm text-slate-100">
+        <div className="max-h-[560px] overflow-auto">
+          <table className="min-w-full table-fixed border-collapse text-left text-sm text-slate-100">
             <thead className="bg-white/10 text-xs uppercase tracking-wide text-cyan-100">
               <tr>
                 {orderedColumns.map((col) => (
-                  <th key={col} className="whitespace-nowrap px-4 py-3 font-semibold">
+                  <th key={col} className="h-12 w-56 whitespace-nowrap px-4 py-3 font-semibold">
                     {col}
                   </th>
                 ))}
@@ -270,8 +304,8 @@ export default function Results() {
               {tableRows.map((row, rowIndex) => (
                 <tr key={row.id || `${fingerprint(row)}-${rowIndex}`} className="border-t border-white/10">
                   {orderedColumns.map((col) => (
-                    <td key={`${rowIndex}-${col}`} className="max-w-[300px] px-4 py-3 align-top text-slate-200">
-                      <span className="break-words">{valueToText(row[col])}</span>
+                    <td key={`${rowIndex}-${col}`} className="h-14 w-56 max-w-56 px-4 py-3 align-top text-slate-200">
+                      <span className="line-clamp-2 break-words">{valueToText(row[col])}</span>
                     </td>
                   ))}
                 </tr>

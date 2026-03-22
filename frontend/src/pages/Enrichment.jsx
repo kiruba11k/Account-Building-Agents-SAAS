@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../api";
 import MultiValueInput from "../components/MultiValueInput";
@@ -7,7 +7,68 @@ import {
   markSalesNavRequestFinal,
   rememberEnrichmentActiveRequest,
 } from "../utils/sessionMemory";
-import { useEffect } from "react";
+
+function splitCsvLine(line, delimiter) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+
+    if (char === '"') {
+      const nextChar = line[i + 1];
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === delimiter && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values;
+}
+
+function parseCompanyInputsFromCsv(csvText) {
+  const cleaned = String(csvText || "").replace(/^\uFEFF/, "");
+  const lines = cleaned
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return [];
+
+  const firstLine = lines[0];
+  const delimiter = firstLine.includes("\t") ? "\t" : firstLine.includes(";") ? ";" : ",";
+  const headerCells = splitCsvLine(firstLine, delimiter).map((cell) => cell.toLowerCase());
+
+  const companyHeaderCandidates = ["company", "company_name", "company url", "company_url", "url", "website", "domain"];
+  let companyColumnIndex = headerCells.findIndex((value) => companyHeaderCandidates.includes(value));
+  const hasHeader = companyColumnIndex !== -1;
+
+  if (companyColumnIndex < 0) {
+    companyColumnIndex = 0;
+  }
+
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+  const values = dataLines
+    .map((line) => splitCsvLine(line, delimiter)[companyColumnIndex])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(values));
+}
 
 export default function Enrichment() {
   const navigate = useNavigate();
@@ -15,6 +76,7 @@ export default function Enrichment() {
   const [companyInputs, setCompanyInputs] = useState([]);
   const [requestName, setRequestName] = useState("");
   const [activeRequest, setActiveRequest] = useState(null);
+  const [uploadMessage, setUploadMessage] = useState("");
 
   useEffect(() => {
     const active = getEnrichmentActiveRequest();
@@ -32,6 +94,30 @@ export default function Enrichment() {
         // ignore status refresh failure
       });
   }, []);
+
+  const totalQueued = useMemo(() => companyInputs.length, [companyInputs]);
+
+  const handleCsvUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = parseCompanyInputsFromCsv(text);
+
+      if (!parsed.length) {
+        setUploadMessage("No company values found in the uploaded CSV.");
+        return;
+      }
+
+      setCompanyInputs((prev) => Array.from(new Set([...prev, ...parsed])));
+      setUploadMessage(`Imported ${parsed.length} companies from ${file.name}.`);
+    } catch {
+      setUploadMessage("Unable to read CSV file.");
+    } finally {
+      event.target.value = "";
+    }
+  };
 
   const launch = async () => {
     if (!companyInputs.length) {
@@ -71,6 +157,18 @@ export default function Enrichment() {
             setValues={setCompanyInputs}
             placeholder="e.g. Stripe or stripe.com"
           />
+          <div className="mt-4 rounded-xl border border-white/15 bg-white/5 p-3">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-300">Bulk enrichment CSV</label>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleCsvUpload}
+              className="mt-2 block w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs text-slate-100 file:mr-3 file:rounded-md file:border-0 file:bg-fuchsia-500/60 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-white"
+            />
+            <p className="mt-2 text-xs text-slate-300">Uses the <b>company</b> column if present; otherwise uses the first column.</p>
+            {uploadMessage && <p className="mt-2 text-xs text-emerald-200">{uploadMessage}</p>}
+            <p className="mt-2 text-xs text-slate-300">Queued companies: <b>{totalQueued}</b></p>
+          </div>
         </div>
       </div>
 
