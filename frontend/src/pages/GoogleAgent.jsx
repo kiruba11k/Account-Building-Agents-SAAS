@@ -73,7 +73,7 @@ export default function GoogleAgent() {
   }, [formData, searchTerms, categories, rawActorInput]);
 
   const endpointLabel = useMemo(
-    () => "Apify actor.start + run polling + dataset.iterate_items",
+    () => "actor.start + run polling + dataset.iterate_items",
     []
   );
 
@@ -211,7 +211,7 @@ export default function GoogleAgent() {
 
           <div>
             <label className="mb-2 block text-xs uppercase tracking-wide text-slate-300">
-              Raw Apify input override (optional JSON)
+              Raw  input override (optional JSON)
             </label>
             <textarea
               value={rawActorInput}
@@ -238,11 +238,7 @@ export default function GoogleAgent() {
           This flow runs in the backend background worker, so switching pages or opening other jobs will not stop your Google lead generation run.
         </p>
 
-        <div className="mt-6 rounded-2xl border border-cyan-200/30 bg-cyan-300/10 p-4 text-sm text-cyan-100">
-          Endpoint strategy: <code>{endpointLabel}</code>
-          <br />
-          Actor: <code>APIFY_GOOGLE_PLACES_ACTOR_ID</code> (default <code>compass/crawler-google-places</code>)
-        </div>
+
 
         {activeRequest?.request_id && (
           <div className="mt-4 rounded-2xl border border-emerald-200/30 bg-emerald-300/10 p-4 text-sm text-emerald-100">
