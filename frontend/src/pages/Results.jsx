@@ -218,6 +218,7 @@ export default function Results() {
   }, [id, page, streamBase]);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
+  const isGoogleAgent = status.agent_type === "google";
 
   return (
     <div className="space-y-6">
@@ -294,7 +295,12 @@ export default function Results() {
             <thead className="bg-white/10 text-xs uppercase tracking-wide text-cyan-100">
               <tr>
                 {orderedColumns.map((col) => (
-                  <th key={col} className="h-12 w-56 whitespace-nowrap px-4 py-3 font-semibold">
+                  <th
+                    key={col}
+                    className={`h-12 whitespace-nowrap px-4 py-3 font-semibold ${
+                      isGoogleAgent ? "w-52 min-w-52 max-w-52" : "w-56"
+                    }`}
+                  >
                     {col}
                   </th>
                 ))}
@@ -302,10 +308,22 @@ export default function Results() {
             </thead>
             <tbody>
               {tableRows.map((row, rowIndex) => (
-                <tr key={row.id || `${fingerprint(row)}-${rowIndex}`} className="border-t border-white/10">
+                <tr
+                  key={row.id || `${fingerprint(row)}-${rowIndex}`}
+                  className={`border-t border-white/10 ${isGoogleAgent ? "h-14" : ""}`}
+                >
                   {orderedColumns.map((col) => (
-                    <td key={`${rowIndex}-${col}`} className="h-14 w-56 max-w-56 px-4 py-3 align-top text-slate-200">
-                      <span className="line-clamp-2 break-words">{valueToText(row[col])}</span>
+                    <td
+                      key={`${rowIndex}-${col}`}
+                      className={`px-4 py-3 text-slate-200 ${
+                        isGoogleAgent
+                          ? "h-14 w-52 min-w-52 max-w-52 align-middle"
+                          : "h-14 w-56 max-w-56 align-top"
+                      }`}
+                    >
+                      <span className={isGoogleAgent ? "block truncate" : "line-clamp-2 break-words"}>
+                        {valueToText(row[col])}
+                      </span>
                     </td>
                   ))}
                 </tr>
