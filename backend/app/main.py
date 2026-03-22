@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
 from .models import Company, LeadRequest
-from app.services.apify_service import enrich_companies, run_salesnav_search
+from app.services.apify_service import (
+    enrich_companies,
+    fetch_company_signals_from_serp,
+    run_salesnav_search,
+)
 from app.services.query_splitter import split_queries
 from app.services.stream_manager import (
     clear_request_rows,
@@ -564,17 +568,24 @@ def run_firmographic_enrichment_pipeline(request_id: int, filters: Dict[str, Any
             if not isinstance(row, dict):
                 continue
 
+            serp_signals = fetch_company_signals_from_serp(
+                company_name=row.get("name"),
+                linkedin_url=row.get("linkedinUrl") or row.get("url"),
+            )
+            merged_row = {**row, **(serp_signals or {})}
+
             company = Company(
                 request_id=request.id,
-                company_url=row.get("url"),
-                company_name=row.get("name"),
-                description=row.get("description"),
-                company_id=row.get("companyId") or row.get("id"),
-                regular_company_url=row.get("linkedinUrl") or row.get("url"),
-                industry=row.get("industry"),
-                employees_count=str(row.get("employees")) if row.get("employees") is not None else None,
-                logo_url=row.get("logo"),
-                raw_data={k: _safe_jsonable(v) for k, v in row.items()},
+                company_url=merged_row.get("url"),
+                company_name=merged_row.get("name"),
+                description=merged_row.get("description"),
+                company_id=merged_row.get("companyId") or merged_row.get("id"),
+                regular_company_url=merged_row.get("linkedinUrl") or merged_row.get("url"),
+                industry=merged_row.get("industry"),
+                employees_count=str(merged_row.get("employees")) if merged_row.get("employees") is not None else None,
+                employee_count_range=merged_row.get("employee_band_indicator"),
+                logo_url=merged_row.get("logo"),
+                raw_data={k: _safe_jsonable(v) for k, v in merged_row.items()},
             )
             db.add(company)
             inserted += 1
