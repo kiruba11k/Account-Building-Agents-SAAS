@@ -30,7 +30,7 @@ const defaultForm = {
 export default function GoogleAgent() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [searchTerms, setSearchTerms] = useState(["restaurant"]);
+  const [searchTerms, setSearchTerms] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeRequest, setActiveRequest] = useState(null);
   const [formData, setFormData] = useState(defaultForm);
@@ -129,7 +129,12 @@ export default function GoogleAgent() {
         />
 
         <div className="mt-5 space-y-4">
-          <MultiValueInput label="Search Terms" values={searchTerms} setValues={setSearchTerms} />
+          <MultiValueInput
+            label="Search Terms"
+            values={searchTerms}
+            setValues={setSearchTerms}
+            placeholder="Type a niche (e.g. AI companies, schools, law firms) and press Enter"
+          />
           <input
             name="location"
             value={formData.location}

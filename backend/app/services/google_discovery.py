@@ -31,13 +31,22 @@ def _string_list(value: Any) -> list[str]:
     return []
 
 
+def _normalize_search_strings(search_terms: list[str], categories: list[str]) -> list[str]:
+    # Legacy UI versions shipped with a default "restaurant" value, which would
+    # keep biasing results even after users added other terms.
+    normalized = search_terms or categories
+    if len(normalized) > 1:
+        normalized = [term for term in normalized if term.lower() not in {"restaurant", "restaurants"}]
+    return normalized or ["business"]
+
+
 def build_google_places_input(payload: Dict[str, Any]) -> Dict[str, Any]:
     search_terms = _string_list(payload.get("search_terms"))
     categories = _string_list(payload.get("categories"))
 
     actor_input: Dict[str, Any] = {
         "locationQuery": str(payload.get("location") or "").strip(),
-        "searchStringsArray": search_terms or categories or ["restaurant"],
+        "searchStringsArray": _normalize_search_strings(search_terms, categories),
         "maxCrawledPlacesPerSearch": _to_int(payload.get("max_places"), 50),
         "language": str(payload.get("language") or "en"),
         "scrapePlaceDetailPage": _to_bool(payload.get("scrapePlaceDetailPage")),
