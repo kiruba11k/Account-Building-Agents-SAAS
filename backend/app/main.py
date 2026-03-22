@@ -442,19 +442,25 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
                 seen.add(fingerprint)
 
             inserted += 1
+            serp_signals = fetch_company_signals_from_serp(
+                company_name=row.get("title") or row.get("name"),
+                linkedin_url=row.get("website") or row.get("googleMapsUrl"),
+            )
+            merged_row = {**row, **(serp_signals or {})}
 
             # ✅ SAVE TO DB
             company = Company(
                 request_id=request.id,
-                company_name=row.get("title") or row.get("name"),
-                company_url=row.get("website"),
-                description=row.get("address"),
-                company_id=row.get("placeId"),
-                regular_company_url=row.get("googleMapsUrl"),
-                industry=row.get("categoryName"),
-                employees_count=row.get("reviewsCount"),
-                logo_url=row.get("imageUrl"),
-                raw_data={k: _safe_jsonable(v) for k, v in row.items()},
+                company_name=merged_row.get("title") or merged_row.get("name"),
+                company_url=merged_row.get("website"),
+                description=merged_row.get("address"),
+                company_id=merged_row.get("placeId"),
+                regular_company_url=merged_row.get("googleMapsUrl"),
+                industry=merged_row.get("categoryName"),
+                employees_count=merged_row.get("reviewsCount"),
+                employee_count_range=merged_row.get("employee_band_indicator"),
+                logo_url=merged_row.get("imageUrl"),
+                raw_data={k: _safe_jsonable(v) for k, v in merged_row.items()},
             )
 
             db.add(company)
@@ -473,6 +479,10 @@ def run_google_discovery_pipeline(request_id: int, filters: Dict[str, Any]):
                     "company_name": company.company_name,
                     "company_url": company.company_url,
                     "industry": company.industry,
+                    "employee_band_indicator": merged_row.get("employee_band_indicator"),
+                    "latest_revenue_indicator": merged_row.get("latest_revenue_indicator"),
+                    "funding_basics_indicator": merged_row.get("funding_basics_indicator"),
+                    "company_reference_link": merged_row.get("company_reference_link"),
                     "total_results": inserted,
                 },
             )
